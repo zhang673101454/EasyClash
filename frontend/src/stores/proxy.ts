@@ -21,7 +21,8 @@ import {
 } from '../../wailsjs/go/main/App'
 import type { backend, main } from '../../wailsjs/go/models'
 import { WindowShow, WindowUnminimise } from '../../wailsjs/runtime/runtime'
-import { errorMessage, isServiceNotReady } from '../lib/errors'
+import { errorMessage, isServiceNotReady, isTransientLoadError } from '../lib/errors'
+import { asSubscriptionList, goBindingsReady, sleep, waitForGoBindings } from '../lib/subscriptions'
 
 export type ProxyStatus = main.ProxyStatus
 export type Subscription = backend.Subscription
@@ -183,15 +184,39 @@ export const useProxyStore = defineStore('proxy', () => {
     } catch {
       autoStart.value = false
     }
-    await refreshSubscriptions()
+    await refreshSubscriptionsRetrying()
     await refreshNodes()
+  }
+
+  async function applySubscriptionList(raw: unknown) {
+    subscriptions.value = asSubscriptionList(raw) as Subscription[]
   }
 
   async function refreshSubscriptions() {
     try {
-      subscriptions.value = (await GetSubscriptions()) || []
+      await applySubscriptionList(await GetSubscriptions())
     } catch (err) {
       showToast(errorMessage(err))
+    }
+  }
+
+  async function refreshSubscriptionsRetrying() {
+    await waitForGoBindings()
+    let lastErr: unknown
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      try {
+        await applySubscriptionList(await GetSubscriptions())
+        return
+      } catch (err) {
+        lastErr = err
+        if (!isTransientLoadError(err) && goBindingsReady()) {
+          break
+        }
+        await sleep(120 * (attempt + 1))
+      }
+    }
+    if (lastErr) {
+      showToast(errorMessage(lastErr))
     }
   }
 
@@ -223,7 +248,7 @@ export const useProxyStore = defineStore('proxy', () => {
     loading.value = true
     const before = subscriptions.value.length
     try {
-      subscriptions.value = (await AddSubscription(url, remark)) || []
+      subscriptions.value = asSubscriptionList(await AddSubscription(url, remark)) as Subscription[]
       draftUrl.value = ''
       draftRemark.value = ''
       showAddForm.value = false
@@ -250,7 +275,7 @@ export const useProxyStore = defineStore('proxy', () => {
     }
     loading.value = true
     try {
-      subscriptions.value = (await RemoveSubscription(id)) || []
+      subscriptions.value = asSubscriptionList(await RemoveSubscription(id)) as Subscription[]
       showToast('订阅已删除')
       await refresh()
     } catch (err) {
@@ -290,7 +315,7 @@ export const useProxyStore = defineStore('proxy', () => {
 
   async function updateRemark(id: string, remark: string) {
     try {
-      subscriptions.value = (await SetSubscriptionRemark(id, remark)) || []
+      subscriptions.value = asSubscriptionList(await SetSubscriptionRemark(id, remark)) as Subscription[]
     } catch (err) {
       showToast(errorMessage(err))
     }

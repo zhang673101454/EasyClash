@@ -16,7 +16,7 @@
     "copyright": "Copyright 2026",
     "comments": "极简代理客户端"
   },
-  "nsisType": "offline",
+  "nsisType": "",
   "obfuscated": false,
   "author": {
     "name": "zhanghao",

@@ -4,7 +4,9 @@
 
 极简桌面代理客户端：打开开关即可代理，一键测速并选择延迟最低的节点。
 
-技术栈：Go + Wails v2 + Vue 3 + Pinia + TailwindCSS，底层引擎为 [mihomo](https://github.com/MetaCubeX/mihomo)（Clash.Meta）。本仓库**不内置节点**，需要自行准备 `mihomo.exe` 并在配置中导入订阅。
+![连接页](docs/screenshots/home.png)
+
+技术栈：Go + Wails v2 + Vue 3 + Pinia + TailwindCSS，底层引擎为 [mihomo](https://github.com/MetaCubeX/mihomo)（Clash.Meta）。安装包已内置 `mihomo.exe`；如果只用绿色版 exe，需要自行把内核放到同一目录。
 
 ---
 

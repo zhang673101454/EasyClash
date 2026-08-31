@@ -36,16 +36,34 @@ func ListSubscriptions(configDir string) ([]Subscription, error) {
 	data, err := os.ReadFile(subscriptionsPath(configDir))
 	if err != nil {
 		if os.IsNotExist(err) {
+			if recovered := subscriptionsFromProviders(configDir); len(recovered) > 0 {
+				return recovered, nil
+			}
 			return []Subscription{}, nil
 		}
 		return nil, fmt.Errorf("读取订阅列表失败: %w", err)
 	}
 	var items []Subscription
 	if err := json.Unmarshal(data, &items); err != nil {
+		if recovered := subscriptionsFromProviders(configDir); len(recovered) > 0 {
+			slog.Warn("订阅列表损坏，已从配置恢复", "error", err)
+			if persistErr := persistSubscriptions(configDir, recovered); persistErr != nil {
+				slog.Warn("写入恢复后的订阅失败", "error", persistErr)
+			}
+			return recovered, nil
+		}
 		return nil, fmt.Errorf("解析订阅列表失败: %w", err)
 	}
 	if items == nil {
 		items = []Subscription{}
+	}
+	if len(items) == 0 {
+		if recovered := subscriptionsFromProviders(configDir); len(recovered) > 0 {
+			if err := persistSubscriptions(configDir, recovered); err != nil {
+				slog.Warn("从配置恢复订阅失败", "error", err)
+			}
+			return recovered, nil
+		}
 	}
 	enabled := 0
 	for _, item := range items {
@@ -170,6 +188,9 @@ func SetSubscriptionEnabled(configDir, id string, enabled bool) ([]Subscription,
 }
 
 func persistSubscriptions(configDir string, items []Subscription) error {
+	if items == nil {
+		items = []Subscription{}
+	}
 	seenEnabled := false
 	for i := range items {
 		if !items[i].Enabled {
@@ -289,12 +310,19 @@ func migrateLegacySubscription(configDir string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
+	items := subscriptionsFromProviders(configDir)
+	if len(items) == 0 {
+		return nil
+	}
+	return persistSubscriptions(configDir, items)
+}
 
+func subscriptionsFromProviders(configDir string) []Subscription {
 	cfg, err := loadConfigMap(configDir)
 	if err != nil {
-		return err
+		return nil
 	}
-	providers, _ := cfg["proxy-providers"].(map[string]any)
+	providers := asStringMap(cfg["proxy-providers"])
 	if len(providers) == 0 {
 		return nil
 	}
@@ -307,8 +335,8 @@ func migrateLegacySubscription(configDir string) error {
 
 	items := make([]Subscription, 0, len(keys))
 	for _, key := range keys {
-		provider, ok := providers[key].(map[string]any)
-		if !ok {
+		provider := asStringMap(providers[key])
+		if provider == nil {
 			continue
 		}
 		raw, _ := provider["url"].(string)
@@ -318,10 +346,26 @@ func migrateLegacySubscription(configDir string) error {
 		}
 		items = append(items, Subscription{ID: key, URL: raw, Enabled: true})
 	}
-	if len(items) == 0 {
+	return items
+}
+
+func asStringMap(value any) map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed
+	case map[any]any:
+		out := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			text, ok := key.(string)
+			if !ok {
+				continue
+			}
+			out[text] = nested
+		}
+		return out
+	default:
 		return nil
 	}
-	return persistSubscriptions(configDir, items)
 }
 
 func loadConfigMap(configDir string) (map[string]any, error) {

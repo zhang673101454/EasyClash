@@ -337,16 +337,33 @@ func (a *App) decorateStatus(status ProxyStatus) ProxyStatus {
 	return status
 }
 
+func (a *App) configDir() (string, error) {
+	if a.manager != nil {
+		return a.manager.ConfigDir(), nil
+	}
+	return backend.DefaultConfigDir()
+}
+
+func cloneSubscriptions(items []backend.Subscription) []Subscription {
+	if len(items) == 0 {
+		return []Subscription{}
+	}
+	out := make([]Subscription, len(items))
+	copy(out, items)
+	return out
+}
+
 // GetSubscriptions 返回订阅列表。
 func (a *App) GetSubscriptions() ([]Subscription, error) {
-	if a.manager == nil {
-		return nil, fmt.Errorf("后端尚未初始化")
-	}
-	items, err := backend.ListSubscriptions(a.manager.ConfigDir())
+	dir, err := a.configDir()
 	if err != nil {
-		return nil, err
+		return []Subscription{}, err
 	}
-	return items, nil
+	items, err := backend.ListSubscriptions(dir)
+	if err != nil {
+		return []Subscription{}, err
+	}
+	return cloneSubscriptions(items), nil
 }
 
 // AddSubscription 新增订阅。
@@ -358,9 +375,9 @@ func (a *App) AddSubscription(rawURL string, remark string) ([]Subscription, err
 	}
 	items, err := backend.AddSubscription(a.manager.ConfigDir(), rawURL, remark)
 	if err != nil {
-		return nil, err
+		return []Subscription{}, err
 	}
-	return items, nil
+	return cloneSubscriptions(items), nil
 }
 
 // SetSubscriptionRemark 更新订阅备注。
@@ -370,9 +387,9 @@ func (a *App) SetSubscriptionRemark(id string, remark string) ([]Subscription, e
 	}
 	items, err := backend.SetSubscriptionRemark(a.manager.ConfigDir(), id, remark)
 	if err != nil {
-		return nil, err
+		return []Subscription{}, err
 	}
-	return items, nil
+	return cloneSubscriptions(items), nil
 }
 
 // RemoveSubscription 删除订阅。
@@ -393,16 +410,16 @@ func (a *App) RemoveSubscription(id string) ([]Subscription, error) {
 	}
 	items, err := backend.RemoveSubscription(a.manager.ConfigDir(), id)
 	if err != nil {
-		return nil, err
+		return []Subscription{}, err
 	}
 	if wasActive && a.manager.Running() {
 		status, stopErr := a.disableLocked()
 		a.emitStatus(status)
 		if stopErr != nil {
-			return items, fmt.Errorf("订阅已删除，但关闭代理失败: %w", stopErr)
+			return cloneSubscriptions(items), fmt.Errorf("订阅已删除，但关闭代理失败: %w", stopErr)
 		}
 	}
-	return items, nil
+	return cloneSubscriptions(items), nil
 }
 
 // UseSubscription 点击订阅：未在使用则独占启用并开启代理，再点同一条则关闭。

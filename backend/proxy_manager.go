@@ -30,7 +30,7 @@ type ProxyManager struct {
 
 // NewProxyManager 创建管理器，并准备配置目录。
 func NewProxyManager() (*ProxyManager, error) {
-	configDir, err := defaultConfigDir()
+	configDir, err := DefaultConfigDir()
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +206,8 @@ func (m *ProxyManager) ConfigDir() string {
 	return m.configDir
 }
 
-func defaultConfigDir() (string, error) {
+// DefaultConfigDir 返回 EasyClash 配置目录，管理器尚未创建时也可读取订阅。
+func DefaultConfigDir() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("获取用户配置目录失败: %w", err)
