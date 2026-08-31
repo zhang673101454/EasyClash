@@ -27,9 +27,9 @@ func main() {
 	err := wails.Run(&options.App{
 		Title:            "EasyClash",
 		Width:            300,
-		Height:           400,
+		Height:           580,
 		MinWidth:         300,
-		MinHeight:        400,
+		MinHeight:        580,
 		DisableResize:    false,
 		Frameless:        true,
 		BackgroundColour: &options.RGBA{R: 0, G: 0, B: 0, A: 0},

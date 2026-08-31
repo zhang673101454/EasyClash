@@ -3,6 +3,11 @@ export type SubscriptionItem = {
   url: string
   remark: string
   enabled: boolean
+  upload?: number
+  download?: number
+  total?: number
+  expire?: number
+  updatedAt?: number
 }
 
 function pickString(raw: Record<string, unknown>, keys: string[]): string {
@@ -30,7 +35,22 @@ export function normalizeSubscription(raw: unknown): SubscriptionItem | null {
     url,
     remark: pickString(rec, ['remark', 'Remark']),
     enabled: Boolean(rec.enabled ?? rec.Enabled),
+    upload: pickNumber(rec, ['upload', 'Upload']),
+    download: pickNumber(rec, ['download', 'Download']),
+    total: pickNumber(rec, ['total', 'Total']),
+    expire: pickNumber(rec, ['expire', 'Expire']),
+    updatedAt: pickNumber(rec, ['updatedAt', 'UpdatedAt']),
   }
+}
+
+function pickNumber(raw: Record<string, unknown>, keys: string[]): number {
+  for (const key of keys) {
+    const value = raw[key]
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value
+    }
+  }
+  return 0
 }
 
 export function asSubscriptionList(raw: unknown): SubscriptionItem[] {

@@ -27,8 +27,10 @@ type App struct {
 	lastAt       time.Time
 	lastMainW    int
 	lastMainH    int
-	warmupMu     sync.Mutex
-	warmupCancel context.CancelFunc
+	warmupMu          sync.Mutex
+	warmupCancel      context.CancelFunc
+	autoSelectMu      sync.Mutex
+	autoSelectCancel  context.CancelFunc
 }
 
 // NewApp 创建应用实例。
@@ -131,8 +133,38 @@ func (a *App) ToggleProxy() (ProxyStatus, error) {
 		return status, err
 	}
 	a.emitStatus(status)
-	a.startWarmup()
+	a.onProxyEnabled()
 	return status, nil
+}
+
+func (a *App) onProxyEnabled() {
+	a.startWarmup()
+	a.restartAutoSelectLoop()
+}
+
+func (a *App) onProxyDisabled() {
+	a.stopWarmup()
+	a.stopAutoSelectLoop()
+}
+
+func (a *App) restartAutoSelectLoop() {
+	a.stopAutoSelectLoop()
+	if a.manager == nil {
+		return
+	}
+	s := backend.LoadSettings(a.manager.ConfigDir())
+	if !s.AutoSelectBest {
+		return
+	}
+	a.startAutoSelectLoop()
+}
+
+func (a *App) autoSelectInterval() time.Duration {
+	if a.manager == nil {
+		return time.Duration(backend.DefaultAutoSelectIntervalMin) * time.Minute
+	}
+	s := backend.LoadSettings(a.manager.ConfigDir())
+	return time.Duration(s.AutoSelectIntervalMin) * time.Minute
 }
 
 // GetStatus 返回当前连接状态。
@@ -205,6 +237,7 @@ func (a *App) enableLocked() (ProxyStatus, error) {
 }
 
 func (a *App) disableLocked() (ProxyStatus, error) {
+	a.onProxyDisabled()
 	var firstErr error
 	if err := backend.SetSystemProxy(false); err != nil {
 		slog.Error("关闭系统代理失败", "error", err)
@@ -237,8 +270,21 @@ func (a *App) statusLocked() (ProxyStatus, error) {
 	return a.decorateStatus(connectedStatus(sel.Name, sel.Latency)), nil
 }
 
-// Subscription 前端订阅项。
-type Subscription = backend.Subscription
+// Subscription 前端订阅项（兼容旧引用）。
+type Subscription = SubscriptionItem
+
+// SubscriptionItem 含流量配额的订阅项。
+type SubscriptionItem struct {
+	ID        string `json:"id"`
+	URL       string `json:"url"`
+	Remark    string `json:"remark"`
+	Enabled   bool   `json:"enabled"`
+	Upload    int64  `json:"upload"`
+	Download  int64  `json:"download"`
+	Total     int64  `json:"total"`
+	Expire    int64  `json:"expire"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
 
 // ProxyNode 前端节点项。
 type ProxyNode = backend.ProxyNode
@@ -269,6 +315,102 @@ func (a *App) startWarmup() {
 	a.warmupCancel = cancel
 	a.warmupMu.Unlock()
 	go a.runWarmup(ctx)
+}
+
+func (a *App) stopWarmup() {
+	a.warmupMu.Lock()
+	if a.warmupCancel != nil {
+		a.warmupCancel()
+		a.warmupCancel = nil
+	}
+	a.warmupMu.Unlock()
+}
+
+func (a *App) startAutoSelectLoop() {
+	a.autoSelectMu.Lock()
+	if a.autoSelectCancel != nil {
+		a.autoSelectCancel()
+	}
+	if a.ctx == nil {
+		a.autoSelectMu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.autoSelectCancel = cancel
+	a.autoSelectMu.Unlock()
+	go a.runAutoSelectLoop(ctx)
+}
+
+func (a *App) stopAutoSelectLoop() {
+	a.autoSelectMu.Lock()
+	if a.autoSelectCancel != nil {
+		a.autoSelectCancel()
+		a.autoSelectCancel = nil
+	}
+	a.autoSelectMu.Unlock()
+}
+
+func (a *App) runAutoSelectLoop(ctx context.Context) {
+	ticker := time.NewTicker(a.autoSelectInterval())
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if a.manager == nil {
+				continue
+			}
+			s := backend.LoadSettings(a.manager.ConfigDir())
+			if !s.AutoSelectBest {
+				continue
+			}
+			a.autoSelectOnce(ctx, false, true)
+		}
+	}
+}
+
+func (a *App) autoSelectOnce(ctx context.Context, warnOnFail bool, requireImprovement bool) {
+	a.mu.Lock()
+	running := a.manager != nil && a.manager.Running()
+	a.mu.Unlock()
+	if !running {
+		return
+	}
+
+	var sel backend.NodeSelection
+	var switched bool
+	var err error
+	if requireImprovement {
+		sel, switched, err = a.client.AutoSelectBestIfBetter(ctx, backend.AutoSelectImprovementMs)
+	} else {
+		sel, err = a.client.AutoSelectBest(ctx)
+		switched = err == nil
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.manager == nil || !a.manager.Running() {
+		return
+	}
+	if err != nil {
+		if warnOnFail {
+			slog.Warn("后台自动测速失败", "error", err)
+		} else {
+			slog.Debug("自动选择最低延迟节点失败", "error", err)
+		}
+		if status, statusErr := a.statusLocked(); statusErr == nil {
+			a.emitStatus(status)
+		}
+		return
+	}
+	if !switched {
+		slog.Debug("当前节点仍合适，跳过切换", "node", sel.Name, "latency", sel.Latency)
+		return
+	}
+	status := a.decorateStatus(connectedStatus(sel.Name, sel.Latency))
+	a.emitStatus(status)
+	slog.Info("已自动切换到最低延迟节点", "node", sel.Name, "latency", sel.Latency)
 }
 
 func (a *App) runWarmup(ctx context.Context) {
@@ -306,22 +448,7 @@ func (a *App) runWarmup(ctx context.Context) {
 		return
 	}
 
-	sel, err := a.client.AutoSelectBest(ctx)
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.manager == nil || !a.manager.Running() {
-		return
-	}
-	if err != nil {
-		slog.Warn("后台自动测速失败", "error", err)
-		if status, statusErr := a.statusLocked(); statusErr == nil {
-			a.emitStatus(status)
-		}
-		return
-	}
-	status := a.decorateStatus(connectedStatus(sel.Name, sel.Latency))
-	a.emitStatus(status)
+	a.autoSelectOnce(ctx, true, false)
 }
 
 func (a *App) decorateStatus(status ProxyStatus) ProxyStatus {
@@ -344,63 +471,125 @@ func (a *App) configDir() (string, error) {
 	return backend.DefaultConfigDir()
 }
 
-func cloneSubscriptions(items []backend.Subscription) []Subscription {
-	if len(items) == 0 {
-		return []Subscription{}
+func subscriptionItemsWithTraffic(configDir string, items []backend.Subscription) ([]SubscriptionItem, error) {
+	cache, err := backend.LoadSubscriptionTrafficCache(configDir)
+	if err != nil {
+		cache = map[string]backend.SubscriptionTraffic{}
 	}
-	out := make([]Subscription, len(items))
-	copy(out, items)
-	return out
+	out := make([]SubscriptionItem, 0, len(items))
+	for _, item := range items {
+		view := SubscriptionItem{
+			ID:      item.ID,
+			URL:     item.URL,
+			Remark:  item.Remark,
+			Enabled: item.Enabled,
+		}
+		if traffic, ok := cache[item.ID]; ok {
+			view.Upload = traffic.Upload
+			view.Download = traffic.Download
+			view.Total = traffic.Total
+			view.Expire = traffic.Expire
+			view.UpdatedAt = traffic.UpdatedAt
+		}
+		out = append(out, view)
+	}
+	return out, nil
 }
 
 // GetSubscriptions 返回订阅列表。
-func (a *App) GetSubscriptions() ([]Subscription, error) {
+func (a *App) GetSubscriptions() ([]SubscriptionItem, error) {
 	dir, err := a.configDir()
 	if err != nil {
-		return []Subscription{}, err
+		return []SubscriptionItem{}, err
 	}
 	items, err := backend.ListSubscriptions(dir)
 	if err != nil {
-		return []Subscription{}, err
+		return []SubscriptionItem{}, err
 	}
-	return cloneSubscriptions(items), nil
+	return subscriptionItemsWithTraffic(dir, items)
+}
+
+// RefreshSubscriptionTraffic 刷新指定订阅的流量信息。
+func (a *App) RefreshSubscriptionTraffic(id string) (SubscriptionItem, error) {
+	dir, err := a.configDir()
+	if err != nil {
+		return SubscriptionItem{}, err
+	}
+	traffic, err := backend.RefreshSubscriptionTraffic(dir, id)
+	if err != nil {
+		return SubscriptionItem{}, err
+	}
+	items, err := backend.ListSubscriptions(dir)
+	if err != nil {
+		return SubscriptionItem{}, err
+	}
+	for _, item := range items {
+		if item.ID != id {
+			continue
+		}
+		return SubscriptionItem{
+			ID:        item.ID,
+			URL:       item.URL,
+			Remark:    item.Remark,
+			Enabled:   item.Enabled,
+			Upload:    traffic.Upload,
+			Download:  traffic.Download,
+			Total:     traffic.Total,
+			Expire:    traffic.Expire,
+			UpdatedAt: traffic.UpdatedAt,
+		}, nil
+	}
+	return SubscriptionItem{}, fmt.Errorf("找不到该订阅")
 }
 
 // AddSubscription 新增订阅。
-func (a *App) AddSubscription(rawURL string, remark string) ([]Subscription, error) {
+func (a *App) AddSubscription(rawURL string, remark string) ([]SubscriptionItem, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.manager == nil {
 		return nil, fmt.Errorf("后端尚未初始化")
 	}
-	items, err := backend.AddSubscription(a.manager.ConfigDir(), rawURL, remark)
+	configDir := a.manager.ConfigDir()
+	items, err := backend.AddSubscription(configDir, rawURL, remark)
 	if err != nil {
-		return []Subscription{}, err
+		return []SubscriptionItem{}, err
 	}
-	return cloneSubscriptions(items), nil
+	for _, item := range items {
+		if backend.SameSubscribeURL(item.URL, rawURL) {
+			go func(id string) {
+				if _, fetchErr := backend.RefreshSubscriptionTraffic(configDir, id); fetchErr != nil {
+					slog.Debug("新订阅流量获取失败", "id", id, "error", fetchErr)
+				}
+			}(item.ID)
+			break
+		}
+	}
+	return subscriptionItemsWithTraffic(configDir, items)
 }
 
 // SetSubscriptionRemark 更新订阅备注。
-func (a *App) SetSubscriptionRemark(id string, remark string) ([]Subscription, error) {
+func (a *App) SetSubscriptionRemark(id string, remark string) ([]SubscriptionItem, error) {
 	if a.manager == nil {
 		return nil, fmt.Errorf("后端尚未初始化")
 	}
-	items, err := backend.SetSubscriptionRemark(a.manager.ConfigDir(), id, remark)
+	configDir := a.manager.ConfigDir()
+	items, err := backend.SetSubscriptionRemark(configDir, id, remark)
 	if err != nil {
-		return []Subscription{}, err
+		return []SubscriptionItem{}, err
 	}
-	return cloneSubscriptions(items), nil
+	return subscriptionItemsWithTraffic(configDir, items)
 }
 
 // RemoveSubscription 删除订阅。
-func (a *App) RemoveSubscription(id string) ([]Subscription, error) {
+func (a *App) RemoveSubscription(id string) ([]SubscriptionItem, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.manager == nil {
 		return nil, fmt.Errorf("后端尚未初始化")
 	}
+	configDir := a.manager.ConfigDir()
 	wasActive := false
-	if current, listErr := backend.ListSubscriptions(a.manager.ConfigDir()); listErr == nil {
+	if current, listErr := backend.ListSubscriptions(configDir); listErr == nil {
 		for _, item := range current {
 			if item.ID == id && item.Enabled {
 				wasActive = true
@@ -408,18 +597,22 @@ func (a *App) RemoveSubscription(id string) ([]Subscription, error) {
 			}
 		}
 	}
-	items, err := backend.RemoveSubscription(a.manager.ConfigDir(), id)
+	items, err := backend.RemoveSubscription(configDir, id)
 	if err != nil {
-		return []Subscription{}, err
+		return []SubscriptionItem{}, err
 	}
 	if wasActive && a.manager.Running() {
 		status, stopErr := a.disableLocked()
 		a.emitStatus(status)
 		if stopErr != nil {
-			return cloneSubscriptions(items), fmt.Errorf("订阅已删除，但关闭代理失败: %w", stopErr)
+			out, mergeErr := subscriptionItemsWithTraffic(configDir, items)
+			if mergeErr != nil {
+				return []SubscriptionItem{}, fmt.Errorf("订阅已删除，但关闭代理失败: %w", stopErr)
+			}
+			return out, fmt.Errorf("订阅已删除，但关闭代理失败: %w", stopErr)
 		}
 	}
-	return cloneSubscriptions(items), nil
+	return subscriptionItemsWithTraffic(configDir, items)
 }
 
 // UseSubscription 点击订阅：未在使用则独占启用并开启代理，再点同一条则关闭。
@@ -461,8 +654,9 @@ func (a *App) UseSubscription(id string) (ProxyStatus, error) {
 		return ProxyStatus{}, err
 	}
 
+	wasRunning := a.manager.Running()
 	var status ProxyStatus
-	if a.manager.Running() {
+	if wasRunning {
 		if err := a.reloadLocked(); err != nil {
 			return ProxyStatus{}, fmt.Errorf("切换订阅失败: %w", err)
 		}
@@ -479,7 +673,7 @@ func (a *App) UseSubscription(id string) (ProxyStatus, error) {
 		}
 	}
 	a.emitStatus(status)
-	a.startWarmup()
+	a.onProxyEnabled()
 	return status, nil
 }
 
@@ -544,9 +738,24 @@ func connectedStatus(name string, latency int) ProxyStatus {
 // GetSettings 返回 TUN / 规则模式设置。
 func (a *App) GetSettings() backend.AppSettings {
 	if a.manager == nil {
-		return backend.AppSettings{Mode: "rule"}
+		return backend.DefaultSettings()
 	}
 	return backend.LoadSettings(a.manager.ConfigDir())
+}
+
+// SetAutoSelectSettings 设置自动选最快节点及轮询间隔（分钟）。
+func (a *App) SetAutoSelectSettings(enabled bool, intervalMin int) (backend.AppSettings, error) {
+	if a.manager == nil {
+		return backend.AppSettings{}, fmt.Errorf("后端尚未初始化")
+	}
+	s := backend.LoadSettings(a.manager.ConfigDir())
+	s.AutoSelectBest = enabled
+	s.AutoSelectIntervalMin = intervalMin
+	if err := backend.SaveSettings(a.manager.ConfigDir(), s); err != nil {
+		return backend.AppSettings{}, err
+	}
+	a.restartAutoSelectLoop()
+	return backend.LoadSettings(a.manager.ConfigDir()), nil
 }
 
 // SetTunMode 开关 TUN。开启后走虚拟网卡，并关闭系统代理。
@@ -612,9 +821,9 @@ func (a *App) SetCompactMode(compact bool) error {
 	}
 	const (
 		mainW = 300
-		mainH = 400
+		mainH = 580
 		minW  = 300
-		minH  = 400
+		minH  = 580
 		miniW = 36
 		miniH = 148
 	)

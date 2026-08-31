@@ -12,18 +12,52 @@ import (
 
 const settingsFileName = "settings.json"
 
+const (
+	DefaultAutoSelectIntervalMin = 15
+	MinAutoSelectIntervalMin     = 5
+	MaxAutoSelectIntervalMin     = 120
+	AutoSelectImprovementMs      = 80
+)
+
 // AppSettings 持久化的应用设置。捕获方式：规则模式（默认，系统代理）或 TUN，始终为 rule。
 type AppSettings struct {
-	Tun  bool   `json:"tun"`
-	Mode string `json:"mode"`
+	Tun                   bool `json:"tun"`
+	Mode                  string `json:"mode"`
+	AutoSelectBest        bool `json:"autoSelectBest"`
+	AutoSelectIntervalMin int  `json:"autoSelectIntervalMin"`
 }
 
 func settingsPath(configDir string) string {
 	return filepath.Join(configDir, settingsFileName)
 }
 
+// DefaultSettings 返回默认应用设置。
+func DefaultSettings() AppSettings {
+	return defaultSettings()
+}
+
 func defaultSettings() AppSettings {
-	return AppSettings{Tun: false, Mode: "rule"}
+	return AppSettings{
+		Tun:                   false,
+		Mode:                  "rule",
+		AutoSelectBest:        true,
+		AutoSelectIntervalMin: DefaultAutoSelectIntervalMin,
+	}
+}
+
+func normalizeSettings(s AppSettings) AppSettings {
+	s.Mode = "rule"
+	if s.AutoSelectIntervalMin <= 0 {
+		s.AutoSelectIntervalMin = DefaultAutoSelectIntervalMin
+		s.AutoSelectBest = true
+	}
+	if s.AutoSelectIntervalMin < MinAutoSelectIntervalMin {
+		s.AutoSelectIntervalMin = MinAutoSelectIntervalMin
+	}
+	if s.AutoSelectIntervalMin > MaxAutoSelectIntervalMin {
+		s.AutoSelectIntervalMin = MaxAutoSelectIntervalMin
+	}
+	return s
 }
 
 // LoadSettings 读取设置，缺省为规则模式。
@@ -37,13 +71,12 @@ func LoadSettings(configDir string) AppSettings {
 		slog.Warn("解析设置失败，将使用默认值", "error", err)
 		return defaultSettings()
 	}
-	s.Mode = "rule"
-	return s
+	return normalizeSettings(s)
 }
 
 // SaveSettings 保存设置并同步到 config.yaml。
 func SaveSettings(configDir string, s AppSettings) error {
-	s.Mode = "rule"
+	s = normalizeSettings(s)
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("编码设置失败: %w", err)

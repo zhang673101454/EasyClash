@@ -76,12 +76,12 @@ watch(
   </div>
   <div
     v-else
-    class="relative flex h-full w-full flex-col app-frame bg-[var(--bg)] text-[var(--text)]"
+    class="app-shell relative flex h-full w-full flex-col app-frame text-[var(--text)]"
     :class="store.connected ? 'app-frame-on' : 'app-frame-off'"
   >
     <TitleBar />
     <TabBar />
-    <main class="flex min-h-0 flex-1 flex-col px-4 pb-4">
+    <main class="flex min-h-0 flex-1 flex-col px-4 pb-4 pt-1">
       <SettingsPanel v-if="store.showSettings" />
       <section v-else-if="store.tab === 'home'" class="flex min-h-0 flex-1 flex-col gap-3">
         <ModeSwitches />

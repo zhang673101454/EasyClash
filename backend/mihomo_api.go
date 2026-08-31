@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -136,36 +137,16 @@ func (c *MihomoClient) SwitchProxy(ctx context.Context, group, node string) erro
 
 // AutoSelectBest 对 PROXY 组测速并切换到延迟最低的节点。
 func (c *MihomoClient) AutoSelectBest(ctx context.Context) (NodeSelection, error) {
-	proxies, err := c.GetProxies(ctx)
-	if err != nil {
+	if err := c.ensureSelectableGroup(ctx); err != nil {
 		return NodeSelection{}, err
 	}
 
-	group, ok := proxies[preferredGroup]
-	if !ok || !isSelectableGroup(group.Type) {
-		return NodeSelection{}, fmt.Errorf("当前订阅没有可测速的节点，请稍后再试")
-	}
-
-	delays, delayErr := c.TestGroupDelay(ctx, preferredGroup)
+	delays, delayErr := c.collectProxyDelays(ctx)
 	if delayErr != nil {
-		return NodeSelection{}, fmt.Errorf("测速失败: %w", delayErr)
+		return NodeSelection{}, delayErr
 	}
 
-	bestNode := ""
-	bestDelay := 0
-	for node, delay := range delays {
-		if _, skip := skippedNodes[node]; skip {
-			continue
-		}
-		if delay <= 0 || delay > 3000 {
-			continue
-		}
-		if bestNode == "" || delay < bestDelay {
-			bestNode = node
-			bestDelay = delay
-		}
-	}
-
+	bestNode, bestDelay := pickBestNode(delays)
 	if bestNode == "" {
 		return NodeSelection{}, fmt.Errorf("当前订阅没有可测速的节点，请稍后再试")
 	}
@@ -174,6 +155,213 @@ func (c *MihomoClient) AutoSelectBest(ctx context.Context) (NodeSelection, error
 		return NodeSelection{}, err
 	}
 	return NodeSelection{Name: bestNode, Latency: bestDelay}, nil
+}
+
+// AutoSelectBestIfBetter 仅当最优节点比当前节点快至少 minImprovementMs 时才切换。
+func (c *MihomoClient) AutoSelectBestIfBetter(ctx context.Context, minImprovementMs int) (NodeSelection, bool, error) {
+	if err := c.ensureSelectableGroup(ctx); err != nil {
+		return NodeSelection{}, false, err
+	}
+
+	current, err := c.CurrentNode(ctx)
+	if err != nil {
+		return NodeSelection{}, false, err
+	}
+
+	delays, delayErr := c.collectProxyDelays(ctx)
+	if delayErr != nil {
+		return NodeSelection{}, false, delayErr
+	}
+
+	bestNode, bestDelay := pickBestNode(delays)
+	if bestNode == "" {
+		return NodeSelection{}, false, fmt.Errorf("当前订阅没有可测速的节点，请稍后再试")
+	}
+
+	if bestNode == current.Name {
+		return NodeSelection{Name: current.Name, Latency: bestDelay}, false, nil
+	}
+
+	currentDelay := delays[current.Name]
+	if currentDelay <= 0 {
+		currentDelay = current.Latency
+	}
+	if current.Name != "" && current.Name != "DIRECT" && currentDelay > 0 && bestDelay > 0 &&
+		currentDelay-bestDelay < minImprovementMs {
+		return NodeSelection{Name: current.Name, Latency: currentDelay}, false, nil
+	}
+
+	if err := c.SwitchProxy(ctx, preferredGroup, bestNode); err != nil {
+		return NodeSelection{}, false, err
+	}
+	return NodeSelection{Name: bestNode, Latency: bestDelay}, true, nil
+}
+
+func (c *MihomoClient) ensureSelectableGroup(ctx context.Context) error {
+	nodes, err := c.ListNodes(ctx)
+	if err == nil {
+		for _, node := range nodes {
+			if node.Name != "" && node.Name != "DIRECT" && node.Name != "REJECT" {
+				return nil
+			}
+		}
+	}
+	proxies, err := c.GetProxies(ctx)
+	if err != nil {
+		return err
+	}
+	group, ok := proxies[preferredGroup]
+	if !ok || !isSelectableGroup(group.Type) {
+		return fmt.Errorf("当前订阅没有可测速的节点，请稍后再试")
+	}
+	return nil
+}
+
+func (c *MihomoClient) collectProxyDelays(ctx context.Context) (map[string]int, error) {
+	if delays, err := c.TestGroupDelay(ctx, preferredGroup); err == nil {
+		if _, bestDelay := pickBestNode(delays); bestDelay > 0 {
+			return delays, nil
+		}
+	}
+	delays, err := c.testAllNodeDelays(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("测速失败: %w", err)
+	}
+	if _, bestDelay := pickBestNode(delays); bestDelay > 0 {
+		return delays, nil
+	}
+	return nil, fmt.Errorf("当前订阅没有可测速的节点，请稍后再试")
+}
+
+func (c *MihomoClient) testAllNodeDelays(ctx context.Context) (map[string]int, error) {
+	var result providersResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/providers/proxies", nil, &result); err != nil {
+		return nil, err
+	}
+
+	type target struct {
+		name         string
+		providerName string
+	}
+	targets := make([]target, 0)
+	for providerName, provider := range result.Providers {
+		if !isHTTPProvider(provider.VehicleType) {
+			continue
+		}
+		for _, proxy := range provider.Proxies {
+			if proxy.Name == "" {
+				continue
+			}
+			if _, skip := skippedNodes[proxy.Name]; skip {
+				continue
+			}
+			targets = append(targets, target{name: proxy.Name, providerName: providerName})
+		}
+	}
+	if len(targets) == 0 {
+		nodes, err := c.ListNodes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, node := range nodes {
+			if node.Name == "" {
+				continue
+			}
+			if _, skip := skippedNodes[node.Name]; skip {
+				continue
+			}
+			targets = append(targets, target{name: node.Name})
+		}
+	}
+	if len(targets) == 0 {
+		return map[string]int{}, nil
+	}
+
+	delays := make(map[string]int, len(targets))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
+
+	for _, item := range targets {
+		wg.Add(1)
+		go func(item target) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			delay, err := c.testSingleProxyDelay(ctx, item.name)
+			if err != nil && item.providerName != "" {
+				delay, err = c.testProviderProxyDelay(ctx, item.providerName, item.name)
+			}
+			if err != nil || delay <= 0 {
+				return
+			}
+			mu.Lock()
+			delays[item.name] = delay
+			mu.Unlock()
+		}(item)
+	}
+	wg.Wait()
+	return delays, nil
+}
+
+func (c *MihomoClient) testSingleProxyDelay(ctx context.Context, name string) (int, error) {
+	path := fmt.Sprintf("/proxies/%s/delay?url=%s&timeout=%d",
+		url.PathEscape(name),
+		url.QueryEscape(delayTestURL),
+		delayTimeoutMs,
+	)
+	var resp struct {
+		Delay int `json:"delay"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return 0, err
+	}
+	return resp.Delay, nil
+}
+
+func (c *MihomoClient) testProviderProxyDelay(ctx context.Context, providerName, proxyName string) (int, error) {
+	path := fmt.Sprintf("/providers/proxies/%s/%s/healthcheck?url=%s&timeout=%d",
+		url.PathEscape(providerName),
+		url.PathEscape(proxyName),
+		url.QueryEscape(delayTestURL),
+		delayTimeoutMs,
+	)
+	var resp struct {
+		Delay int `json:"delay"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return 0, err
+	}
+	return resp.Delay, nil
+}
+
+func pickBestNode(delays map[string]int) (string, int) {
+	if best, delay := pickBestNodeMaxDelay(delays, delayMaxUsableMs); best != "" {
+		return best, delay
+	}
+	return pickBestNodeMaxDelay(delays, 0)
+}
+
+func pickBestNodeMaxDelay(delays map[string]int, maxDelay int) (string, int) {
+	bestNode := ""
+	bestDelay := 0
+	for node, delay := range delays {
+		if _, skip := skippedNodes[node]; skip {
+			continue
+		}
+		if delay <= 0 {
+			continue
+		}
+		if maxDelay > 0 && delay > maxDelay {
+			continue
+		}
+		if bestNode == "" || delay < bestDelay {
+			bestNode = node
+			bestDelay = delay
+		}
+	}
+	return bestNode, bestDelay
 }
 
 // CurrentNode 读取当前选中节点及最近一次延迟。

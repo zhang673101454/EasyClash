@@ -34,12 +34,20 @@ export function GetTraffic() {
   return window['go']['main']['App']['GetTraffic']();
 }
 
+export function RefreshSubscriptionTraffic(arg1) {
+  return window['go']['main']['App']['RefreshSubscriptionTraffic'](arg1);
+}
+
 export function RemoveSubscription(arg1) {
   return window['go']['main']['App']['RemoveSubscription'](arg1);
 }
 
 export function SelectNode(arg1) {
   return window['go']['main']['App']['SelectNode'](arg1);
+}
+
+export function SetAutoSelectSettings(arg1, arg2) {
+  return window['go']['main']['App']['SetAutoSelectSettings'](arg1, arg2);
 }
 
 export function SetAutoStart(arg1) {

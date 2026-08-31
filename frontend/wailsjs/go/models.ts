@@ -3,6 +3,8 @@ export namespace backend {
 	export class AppSettings {
 	    tun: boolean;
 	    mode: string;
+	    autoSelectBest: boolean;
+	    autoSelectIntervalMin: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -12,6 +14,8 @@ export namespace backend {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.tun = source["tun"];
 	        this.mode = source["mode"];
+	        this.autoSelectBest = source["autoSelectBest"];
+	        this.autoSelectIntervalMin = source["autoSelectIntervalMin"];
 	    }
 	}
 	export class ProxyNode {
@@ -32,24 +36,6 @@ export namespace backend {
 	        this.delay = source["delay"];
 	        this.selected = source["selected"];
 	        this.tested = source["tested"];
-	    }
-	}
-	export class Subscription {
-	    id: string;
-	    url: string;
-	    remark: string;
-	    enabled: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new Subscription(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.url = source["url"];
-	        this.remark = source["remark"];
-	        this.enabled = source["enabled"];
 	    }
 	}
 
@@ -77,6 +63,34 @@ export namespace main {
 	        this.message = source["message"];
 	        this.mode = source["mode"];
 	        this.tun = source["tun"];
+	    }
+	}
+	export class SubscriptionItem {
+	    id: string;
+	    url: string;
+	    remark: string;
+	    enabled: boolean;
+	    upload: number;
+	    download: number;
+	    total: number;
+	    expire: number;
+	    updatedAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubscriptionItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.url = source["url"];
+	        this.remark = source["remark"];
+	        this.enabled = source["enabled"];
+	        this.upload = source["upload"];
+	        this.download = source["download"];
+	        this.total = source["total"];
+	        this.expire = source["expire"];
+	        this.updatedAt = source["updatedAt"];
 	    }
 	}
 	export class TrafficInfo {

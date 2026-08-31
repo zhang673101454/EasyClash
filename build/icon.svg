@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="128" y1="96" x2="896" y2="928" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111827"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="280" y1="240" x2="760" y2="820" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A5F3FC"/>
+      <stop offset="1" stop-color="#0891B2"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="500" y1="220" x2="640" y2="820" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="228" fill="url(#bg)"/>
+  <rect x="40" y="40" width="944" height="944" rx="188" stroke="#22D3EE" stroke-opacity="0.28" stroke-width="12"/>
+
+  <circle cx="512" cy="512" r="286" stroke="#22D3EE" stroke-opacity="0.14" stroke-width="16"/>
+  <circle cx="774" cy="352" r="36" fill="#22D3EE"/>
+  <circle cx="278" cy="676" r="30" fill="#0891B2"/>
+
+  <path
+    d="M292 268H724C768 268 804 304 804 348V404C804 448 768 484 724 484H392V540H692C736 540 772 576 772 620V676C772 720 736 756 692 756H292V268Z"
+    fill="url(#accent)"
+  />
+  <path
+    d="M292 756H724C768 756 804 792 804 836V892C804 936 768 972 724 972H292V756Z"
+    fill="url(#accent)"
+  />
+  <path
+    d="M612 228L472 508H568L428 808H688L568 508H664L612 228Z"
+    fill="url(#bolt)"
+  />
+</svg>

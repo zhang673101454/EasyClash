@@ -268,6 +268,10 @@ func newProviderEntry(id, rawURL string) map[string]any {
 	}
 }
 
+func SameSubscribeURL(left, right string) bool {
+	return sameSubscribeURL(left, right)
+}
+
 func sameSubscribeURL(left, right string) bool {
 	a, errA := url.Parse(strings.TrimSpace(left))
 	b, errB := url.Parse(strings.TrimSpace(right))

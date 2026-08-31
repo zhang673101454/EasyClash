@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { WindowHide } from '../../wailsjs/runtime/runtime'
 import { getTheme, toggleTheme, type Theme } from '../lib/theme'
 import { useProxyStore } from '../stores/proxy'
+import LogoMark from './LogoMark.vue'
 
 const store = useProxyStore()
 const theme = ref<Theme>(getTheme())
@@ -21,14 +22,28 @@ function onToggleTheme() {
 </script>
 
 <template>
-  <header
-    class="flex h-11 shrink-0 items-center justify-between px-3 [--wails-draggable:drag]"
-  >
-    <span class="text-xs font-medium tracking-wide text-[var(--text-muted)]">EasyClash</span>
-    <div class="flex items-center gap-1 [--wails-draggable:no-drag]">
+  <header class="app-header flex h-12 shrink-0 items-center justify-between px-3 [--wails-draggable:drag]">
+    <div class="flex min-w-0 items-center gap-2">
+      <span class="sp-logo">
+        <LogoMark />
+      </span>
+      <div class="min-w-0">
+        <div class="flex items-center gap-1.5">
+          <span class="text-xs font-semibold tracking-wide text-[var(--text)]">EasyClash</span>
+          <span
+            class="sp-status-dot"
+            :class="store.connected ? 'sp-status-dot-on' : 'sp-status-dot-off'"
+          />
+        </div>
+        <p class="truncate text-[10px] text-[var(--text-faint)]">
+          {{ store.connected ? (store.nodeName || '已连接') : '未连接' }}
+        </p>
+      </div>
+    </div>
+    <div class="flex items-center gap-0.5 [--wails-draggable:no-drag]">
       <button
-        class="flex h-6 w-6 items-center justify-center rounded-full transition hover:bg-[var(--surface)]"
-        :class="store.showAddForm ? 'text-[var(--accent-text)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'"
+        class="sp-btn-icon"
+        :class="store.showAddForm ? 'sp-btn-icon-active' : ''"
         type="button"
         aria-label="添加订阅"
         title="添加订阅"
@@ -40,7 +55,7 @@ function onToggleTheme() {
         </svg>
       </button>
       <button
-        class="flex h-6 w-6 items-center justify-center rounded-full text-[var(--text-muted)] transition hover:bg-[var(--surface)] hover:text-[var(--text)]"
+        class="sp-btn-icon"
         type="button"
         :aria-label="theme === 'dark' ? '切换为浅色' : '切换为深色'"
         :title="theme === 'dark' ? '浅色' : '深色'"
@@ -55,8 +70,8 @@ function onToggleTheme() {
         </svg>
       </button>
       <button
-        class="flex h-6 w-6 items-center justify-center rounded-full transition hover:bg-[var(--surface)]"
-        :class="store.showSettings ? 'text-[var(--accent-text)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'"
+        class="sp-btn-icon"
+        :class="store.showSettings ? 'sp-btn-icon-active' : ''"
         type="button"
         aria-label="设置"
         title="设置"
@@ -68,7 +83,7 @@ function onToggleTheme() {
         </svg>
       </button>
       <button
-        class="flex h-6 w-6 items-center justify-center rounded-full text-[var(--text-muted)] transition hover:bg-[var(--surface)] hover:text-[var(--text)]"
+        class="sp-btn-icon"
         type="button"
         aria-label="隐藏到侧边栏"
         title="侧边栏"
@@ -80,10 +95,10 @@ function onToggleTheme() {
         </svg>
       </button>
       <button
-        class="flex h-6 w-6 items-center justify-center rounded-full text-[var(--text-muted)] transition hover:bg-[var(--surface)] hover:text-[var(--text)]"
+        class="sp-btn-icon"
         type="button"
         aria-label="最小化到托盘"
-        title="最小化到托盘"
+        title="最小化"
         @click="hideWindow"
       >
         <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
@@ -91,13 +106,13 @@ function onToggleTheme() {
         </svg>
       </button>
       <button
-        class="flex h-6 w-6 items-center justify-center rounded-full text-[var(--text-muted)] transition hover:bg-[var(--surface)] hover:text-[var(--text)]"
+        class="sp-btn-icon"
         type="button"
-        aria-label="最小化到托盘"
-        title="最小化到托盘"
+        aria-label="关闭到托盘"
+        title="关闭"
         @click="hideWindow"
       >
-        <span class="mb-1 text-lg leading-none">×</span>
+        <span class="mb-0.5 text-base leading-none">×</span>
       </button>
     </div>
   </header>

@@ -9,8 +9,10 @@ import {
   GetStatus,
   GetSubscriptions,
   GetTraffic,
+  RefreshSubscriptionTraffic,
   RemoveSubscription,
   SelectNode,
+  SetAutoSelectSettings,
   SetAutoStart,
   SetCompactMode,
   ShouldStartCompact,
@@ -25,7 +27,7 @@ import { errorMessage, isServiceNotReady, isTransientLoadError } from '../lib/er
 import { asSubscriptionList, goBindingsReady, sleep, waitForGoBindings } from '../lib/subscriptions'
 
 export type ProxyStatus = main.ProxyStatus
-export type Subscription = backend.Subscription
+export type Subscription = main.SubscriptionItem
 export type ProxyNode = backend.ProxyNode
 export type TrafficInfo = main.TrafficInfo
 
@@ -75,6 +77,8 @@ export const useProxyStore = defineStore('proxy', () => {
   const tun = ref(false)
   const ruleMode = ref(true)
   const autoStart = ref(false)
+  const autoSelectBest = ref(true)
+  const autoSelectIntervalMin = ref(15)
   const upRate = ref(0)
   const downRate = ref(0)
   let toastTimer = 0
@@ -176,6 +180,8 @@ export const useProxyStore = defineStore('proxy', () => {
       const settings = await GetSettings()
       tun.value = Boolean(settings.tun)
       ruleMode.value = !Boolean(settings.tun)
+      autoSelectBest.value = settings.autoSelectBest !== false
+      autoSelectIntervalMin.value = settings.autoSelectIntervalMin || 15
     } catch {
       /* ignore */
     }
@@ -185,6 +191,7 @@ export const useProxyStore = defineStore('proxy', () => {
       autoStart.value = false
     }
     await refreshSubscriptionsRetrying()
+    void refreshAllSubscriptionTraffic()
     await refreshNodes()
   }
 
@@ -198,6 +205,33 @@ export const useProxyStore = defineStore('proxy', () => {
     } catch (err) {
       showToast(errorMessage(err))
     }
+  }
+
+  async function refreshSubscriptionTraffic(id: string, silent = false) {
+    try {
+      const updated = await RefreshSubscriptionTraffic(id)
+      subscriptions.value = subscriptions.value.map((sub) =>
+        sub.id === id
+          ? {
+              ...sub,
+              upload: updated.upload || 0,
+              download: updated.download || 0,
+              total: updated.total || 0,
+              expire: updated.expire || 0,
+              updatedAt: updated.updatedAt || 0,
+            }
+          : sub,
+      )
+    } catch (err) {
+      if (!silent) {
+        showToast(errorMessage(err))
+      }
+    }
+  }
+
+  async function refreshAllSubscriptionTraffic() {
+    const ids = subscriptions.value.map((sub) => sub.id)
+    await Promise.all(ids.map((id) => refreshSubscriptionTraffic(id, true)))
   }
 
   async function refreshSubscriptionsRetrying() {
@@ -292,9 +326,7 @@ export const useProxyStore = defineStore('proxy', () => {
     switching.value = true
     const turningOff = Boolean(item.enabled && connected.value)
     subscriptions.value = subscriptions.value.map((sub) => ({
-      id: sub.id,
-      url: sub.url,
-      remark: sub.remark,
+      ...sub,
       enabled: turningOff ? false : sub.id === item.id,
     }))
     connected.value = !turningOff
@@ -416,6 +448,30 @@ export const useProxyStore = defineStore('proxy', () => {
     }
   }
 
+  async function toggleAutoSelectBest() {
+    try {
+      const next = !autoSelectBest.value
+      const settings = await SetAutoSelectSettings(next, autoSelectIntervalMin.value)
+      autoSelectBest.value = Boolean(settings.autoSelectBest)
+      autoSelectIntervalMin.value = settings.autoSelectIntervalMin || 15
+    } catch (err) {
+      showToast(errorMessage(err))
+    }
+  }
+
+  async function setAutoSelectInterval(minutes: number) {
+    if (autoSelectIntervalMin.value === minutes) {
+      return
+    }
+    try {
+      const settings = await SetAutoSelectSettings(autoSelectBest.value, minutes)
+      autoSelectBest.value = Boolean(settings.autoSelectBest)
+      autoSelectIntervalMin.value = settings.autoSelectIntervalMin || minutes
+    } catch (err) {
+      showToast(errorMessage(err))
+    }
+  }
+
   async function toggleAutoStart() {
     try {
       const next = !autoStart.value
@@ -480,6 +536,8 @@ export const useProxyStore = defineStore('proxy', () => {
     tun,
     ruleMode,
     autoStart,
+    autoSelectBest,
+    autoSelectIntervalMin,
     upRate,
     downRate,
     visibleNodes,
@@ -491,6 +549,8 @@ export const useProxyStore = defineStore('proxy', () => {
     requireService,
     refresh,
     refreshNodes,
+    refreshSubscriptionTraffic,
+    refreshAllSubscriptionTraffic,
     addSubscription,
     onAddClick,
     removeSubscription,
@@ -503,6 +563,8 @@ export const useProxyStore = defineStore('proxy', () => {
     applyStartLayout,
     setTun,
     toggleAutoStart,
+    toggleAutoSelectBest,
+    setAutoSelectInterval,
     startTrafficLoop,
     stopTrafficLoop,
   }

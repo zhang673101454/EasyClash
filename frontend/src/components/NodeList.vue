@@ -33,7 +33,7 @@ function delayColor(node: ProxyNode): string {
 </script>
 
 <template>
-  <section class="flex h-full min-h-0 flex-col gap-2 [--wails-draggable:no-drag]">
+  <section class="flex h-full min-h-0 flex-col gap-2.5 [--wails-draggable:no-drag]">
     <SpeedTestButton />
     <div class="flex items-center justify-between px-0.5">
       <p class="text-[11px] text-[var(--text-faint)]">
@@ -43,44 +43,50 @@ function delayColor(node: ProxyNode): string {
         </span>
       </p>
       <button
-        class="text-[11px] text-[var(--text-muted)] hover:text-[var(--accent-text)]"
+        class="rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] transition hover:bg-[var(--surface)] hover:text-[var(--accent-text)]"
         type="button"
         @click="store.hideUnavailable = !store.hideUnavailable"
       >
         {{ store.hideUnavailable ? '显示全部' : '隐藏不可用' }}
       </button>
     </div>
-    <p v-if="!store.connected" class="pt-10 text-center text-xs text-[var(--text-faint)]">
-      请先到「连接」页点击一个订阅开始使用
-    </p>
-    <p v-else-if="store.loading && store.nodes.length === 0" class="pt-10 text-center text-xs text-[var(--text-faint)]">
+
+    <div v-if="!store.connected" class="sp-empty">
+      <span class="sp-empty-icon">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M12 3v8M7.5 6.5a7 7 0 1 0 9 0" />
+        </svg>
+      </span>
+      <p>尚未连接</p>
+      <p class="text-[10px]">请先到「连接」页启用订阅</p>
+    </div>
+    <p v-else-if="store.loading && store.nodes.length === 0" class="sp-empty">
       正在加载节点…
     </p>
-    <p v-else-if="store.nodes.length === 0" class="pt-10 text-center text-xs text-[var(--text-faint)]">
-      暂无可用节点，请先添加并点击订阅
+    <p v-else-if="store.nodes.length === 0" class="sp-empty">
+      暂无可用节点
     </p>
-    <p v-else-if="store.visibleNodes.length === 0" class="pt-10 text-center text-xs text-[var(--text-faint)]">
+    <p v-else-if="store.visibleNodes.length === 0" class="sp-empty">
       当前没有可用节点，可点「显示全部」查看
     </p>
-    <div v-else class="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+
+    <div v-else class="scroll-area min-h-0 flex-1 space-y-1.5">
       <button
         v-for="node in store.visibleNodes"
         :key="node.name"
-        class="flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition"
-        :class="node.selected
-          ? 'border-[var(--accent-border)] bg-[var(--accent-soft)]'
-          : 'sp-card hover:border-[var(--border-strong)]'"
+        class="sp-card flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition"
+        :class="node.selected ? 'sp-card-active' : 'hover:border-[var(--border-strong)]'"
         type="button"
         :disabled="store.loading"
         @click="store.selectNode(node.name)"
       >
         <span
           class="min-w-0 truncate text-xs"
-          :style="{ color: node.selected ? 'var(--accent-text)' : 'var(--text)' }"
+          :class="node.selected ? 'font-medium text-[var(--accent-text)]' : 'text-[var(--text)]'"
         >
           {{ node.name }}
         </span>
-        <span class="ml-2 shrink-0 text-[11px] tabular-nums" :style="{ color: delayColor(node) }">
+        <span class="sp-delay-pill ml-2 shrink-0" :style="{ color: delayColor(node) }">
           {{ delayText(node) }}
         </span>
       </button>
