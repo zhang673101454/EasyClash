@@ -1,0 +1,25 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "EasyClash",
+  "outputfilename": "EasyClash",
+  "frontend:dir": "frontend",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "wailsjsdir": "./frontend",
+  "version": "1.0.0",
+  "info": {
+    "companyName": "EasyClash",
+    "productName": "EasyClash",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright 2026",
+    "comments": "极简代理客户端"
+  },
+  "nsisType": "offline",
+  "obfuscated": false,
+  "author": {
+    "name": "zhanghao",
+    "email": "qiuchuang@huixinhongbo.com"
+  }
+}

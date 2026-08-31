@@ -1,0 +1,11 @@
+build/bin
+node_modules
+frontend/dist
+frontend/wailsjs/runtime/runtime.js.map
+resources/mihomo
+resources/mihomo.exe
+resources/*.zip
+*.syso
+.DS_Store
+Thumbs.db
+*.log

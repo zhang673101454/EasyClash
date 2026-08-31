@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>EasyClash</title>
+    <script>
+      try {
+        document.documentElement.dataset.theme =
+          localStorage.getItem('easy-clash-theme') === 'light' ||
+          localStorage.getItem('simple-proxy-theme') === 'light'
+            ? 'light'
+            : 'dark'
+      } catch (e) {}
+    </script>
+</head>
+<body>
+<div id="app"></div>
+<script src="./src/main.ts" type="module"></script>
+</body>
+</html>
+
