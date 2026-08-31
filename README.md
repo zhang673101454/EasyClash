@@ -12,67 +12,35 @@
 
 ## 1. 环境要求
 
-在 **cmd** 中检查（不要用旧的 32 位 Go）：
+在 **cmd** 中检查：
 
 ```bat
 go version
-go env GOARCH
 node -v
 npm -v
 wails version
 ```
 
-应类似：
-
 | 工具 | 要求 |
 |------|------|
-| Go | 1.21+，且必须是 **windows/amd64**（`go env GOARCH` 为 `amd64`） |
-| Node.js | 18+（当前开发用过 26） |
+| Go | 1.21+（[官网下载 Windows amd64](https://go.dev/dl/)） |
+| Node.js | 18+ |
 | Wails CLI | v2.15.0 |
-| WebView2 | Windows 11 一般已自带 |
+| WebView2 | Windows 10/11 一般已自带 |
+| NSIS | 打安装包时才需要，见第 4 节 |
 
-### 1.1 安装 / 重装 64 位 Go
-
-若 `go version` 显示 `windows/386`，必须卸掉 32 位后再装 64 位：
-
-1. 「设置 → 应用」卸载安装在 `Program Files (x86)\Go` 的 Go。
-2. 打开 [https://go.dev/dl/](https://go.dev/dl/)，下载 **`go1.27.0.windows-amd64.msi`**（不要选 386）。
-3. **关掉所有 cmd / Cursor 终端再重开**，再执行：
-
-```bat
-where go
-go version
-go env GOARCH
-```
-
-应看到：
-
-```
-D:\Program Files\Go\bin\go.exe
-go version go1.27.0 windows/amd64
-amd64
-```
-
-若 `where go` 先打出 `(x86)` 路径，到系统环境变量 Path 里删掉 `...\Program Files (x86)\Go\bin`。
-
-### 1.2 安装 Wails CLI
-
-用 **64 位 Go** 安装，否则会编出 32 位程序：
+### 1.1 安装 Wails CLI
 
 ```bat
 go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
 ```
 
-把 `%USERPROFILE%\go\bin` 加入用户 Path（本机一般为 `C:\Users\你的用户名\go\bin`）。
-
-验证：
+把 `%USERPROFILE%\go\bin` 加入用户 Path（一般为 `C:\Users\你的用户名\go\bin`），然后重开终端：
 
 ```bat
 wails version
 wails doctor
 ```
-
-`wails doctor` 里 **Architecture 必须是 amd64**。
 
 ---
 
@@ -101,8 +69,8 @@ wails doctor
 
 一般是 `C:\Users\你的用户名\AppData\Roaming\EasyClash\config.yaml`。
 
-**订阅在界面里设置：** 打开「订阅」页，粘贴机场 Clash / mihomo 订阅 URL 后点「添加」。可添加多条，用「使用中 / 已停用」切换当前启用的订阅。  
-「节点」页可查看全部可用节点并点击切换。打开开关后列表才会加载。
+**订阅在界面里设置：** 连接页点右上角 `+`，粘贴 Clash / mihomo 订阅 URL 后点「确认添加」。点一条订阅即可开始使用，再点同一条则关闭。  
+「节点」页可查看可用节点并点击切换；先点订阅开始使用后，节点列表才会加载。
 
 ---
 
@@ -143,20 +111,14 @@ npx vite preview --host 127.0.0.1 --port 4173
 
 ## 4. 怎么打包
 
-在项目根目录：
+先把 `mihomo.exe` 放到 `resources\mihomo.exe`（见第 2 节），安装包脚本会把它打进去。
+
+### 4.1 绿色版 exe
 
 ```bat
 cd /d e:\code\easy-clash
 wails build -platform windows/amd64 -trimpath -ldflags "-s -w"
 ```
-
-参数含义：
-
-| 参数 | 作用 |
-|------|------|
-| `-platform windows/amd64` | 强制 64 位，避免 Wails 跟错架构 |
-| `-trimpath` | 去掉本机路径，方便分发 |
-| `-ldflags "-s -w"` | 去掉符号表，缩小体积 |
 
 产物：
 
@@ -164,11 +126,9 @@ wails build -platform windows/amd64 -trimpath -ldflags "-s -w"
 e:\code\easy-clash\build\bin\EasyClash.exe
 ```
 
-当前大约 12 MB。不要加 `-webview2 embed`，否则会把 WebView2 打进去，体积暴涨。已安装 [UPX](https://upx.github.io/) 时可再加 `-upx` 进一步压缩。
+大约 12 MB。不要加 `-webview2 embed`，否则会把 WebView2 打进去，体积暴涨。已安装 [UPX](https://upx.github.io/) 时可再加 `-upx`。
 
-### 分发给别人时
-
-把这些放在同一文件夹：
+分发绿色版时，把这些放在同一文件夹：
 
 ```
 SomeFolder\
@@ -176,7 +136,43 @@ SomeFolder\
   mihomo.exe          （或 resources\mihomo.exe）
 ```
 
-对方电脑需要已安装 WebView2（Win10/11 通常已有）。首次运行同样会在 `%APPDATA%\EasyClash\` 生成配置。
+### 4.2 安装包（推荐）
+
+1. 安装 [NSIS](https://nsis.sourceforge.io/) 3.x。可用：
+
+```bat
+winget install --id NSIS.NSIS -e --source winget
+```
+
+装完后确认 `makensis` 能找到（必要时把 `C:\Program Files (x86)\NSIS` 加入 Path）：
+
+```bat
+makensis /VERSION
+```
+
+2. 确认 `resources\mihomo.exe` 已存在。`build\windows\installer\project.nsi` 会把它复制到安装目录。
+
+3. 在项目根目录打包：
+
+```bat
+cd /d e:\code\easy-clash
+wails build -platform windows/amd64 -nsis -trimpath -ldflags "-s -w"
+```
+
+产物：
+
+```
+e:\code\easy-clash\build\bin\EasyClash.exe
+e:\code\easy-clash\build\bin\EasyClash-amd64-installer.exe
+```
+
+`EasyClash-amd64-installer.exe` 就是安装包（约 24 MB，已内置 mihomo）。双击安装后会写入「程序文件」、开始菜单和桌面快捷方式。对方电脑一般已有 WebView2。
+
+`wails.json` 里 `nsisType` 保持为空即可，不要写成 `offline`（当前 Wails 2.15 不支持该值）。
+
+正式发布可把安装包上传到 GitHub Release，例如：
+
+https://github.com/zhang673101454/EasyClash/releases/tag/v1.0.0
 
 ---
 
@@ -189,8 +185,11 @@ wails doctor
 rem 开发运行
 wails dev
 
-rem 正式打包（推荐）
+rem 绿色版 exe
 wails build -platform windows/amd64 -trimpath -ldflags "-s -w"
+
+rem 安装包（需先安装 NSIS，并把 mihomo.exe 放到 resources\）
+wails build -platform windows/amd64 -nsis -trimpath -ldflags "-s -w"
 
 rem 只编前端
 cd frontend
@@ -201,17 +200,14 @@ npm run build
 
 ## 6. 常见问题
 
-**Q: `go version` 仍是 386？**  
-Path 里 32 位 Go 排在 64 位前面。卸掉 `(x86)` 那份，或从 Path 删除对应目录，然后重开终端。
-
 **Q: Cursor / 终端里找不到 `go` 或 `wails`？**  
-把 `D:\Program Files\Go\bin` 和 `%USERPROFILE%\go\bin` 加入 Path，然后重启 Cursor。
+把 Go 安装目录的 `bin` 和 `%USERPROFILE%\go\bin` 加入 Path，然后重启 Cursor。
 
 **Q: 点开关提示找不到 mihomo？**  
-按第 2 节把 `mihomo.exe` 放到程序目录或 `resources\`。
+按第 2 节把 `mihomo.exe` 放到程序目录或 `resources\`。打安装包前也要放在 `resources\mihomo.exe`。
 
 **Q: 订阅在哪填？**  
-主界面底部「订阅链接」，粘贴后点保存。不要改 `external-controller`，必须保持 `127.0.0.1:9090`。
+连接页点右上角 `+`，粘贴订阅 URL 后点「确认添加」。不要改 `external-controller`，必须保持 `127.0.0.1:9090`。
 
 **Q: 已连接但上不了网 / 测速失败？**  
 先确认订阅已保存且机场链接可用。节点写在 `%APPDATA%\EasyClash\config.yaml` 的 `proxy-providers` 里。
@@ -219,5 +215,8 @@ Path 里 32 位 Go 排在 64 位前面。卸掉 `(x86)` 那份，或从 Path 删
 **Q: 关窗口后任务栏没了，也关不掉？**  
 程序在系统托盘。右键托盘图标选「退出」。
 
-**Q: 打包报 `EasyClash-res.syso` 找不到？**  
-多半是 32 位 Wails 在编 64 位包。用 64 位 Go 重新 `go install` Wails，再带 `-platform windows/amd64` 打包。
+**Q: `wails build -nsis` 报 `Unsupported nsisType: offline`？**  
+把 `wails.json` 里的 `nsisType` 改成空字符串 `""`。
+
+**Q: `makensis not found` / 打不出安装包？**  
+先安装 NSIS，并把 `C:\Program Files (x86)\NSIS` 加入 Path，重开终端后再打包。
