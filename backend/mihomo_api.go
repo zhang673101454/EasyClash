@@ -189,12 +189,15 @@ func (c *MihomoClient) AutoSelectBestIfBetter(ctx context.Context, minImprovemen
 		return NodeSelection{Name: bestNode, Latency: bestDelay}, true, nil
 	}
 
+	// 仅用本轮测速结果判断；当前节点测不通时不能沿用历史延迟而拒绝切换。
 	currentDelay := delays[current.Name]
 	if currentDelay <= 0 {
-		currentDelay = current.Latency
+		if err := c.SwitchProxy(ctx, preferredGroup, bestNode); err != nil {
+			return NodeSelection{}, false, err
+		}
+		return NodeSelection{Name: bestNode, Latency: bestDelay}, true, nil
 	}
-	if current.Name != "" && current.Name != "DIRECT" && currentDelay > 0 && bestDelay > 0 &&
-		currentDelay-bestDelay < minImprovementMs {
+	if bestDelay > 0 && currentDelay-bestDelay < minImprovementMs {
 		return NodeSelection{Name: current.Name, Latency: currentDelay}, false, nil
 	}
 

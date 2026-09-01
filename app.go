@@ -51,6 +51,10 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.manager = manager
 	manager.SetExitHandler(a.onMihomoUnexpectedExit)
+	// 异常退出可能留下指向 7890 的系统代理；启动时尚未连接，仅在仍是本软件代理时清理。
+	if err := backend.DisableSystemProxyIfOurs(); err != nil {
+		slog.Warn("启动时清理残留系统代理失败", "error", err)
+	}
 	a.startTray()
 	backend.RefreshAutoStartCommand()
 }
@@ -62,6 +66,9 @@ func (a *App) onMihomoUnexpectedExit() {
 	slog.Error("mihomo 意外退出，正在关闭系统代理并同步状态")
 	if err := backend.SetSystemProxy(false); err != nil {
 		slog.Error("崩溃后关闭系统代理失败", "error", err)
+		if forceErr := backend.ForceDisableEasyClashProxy(); forceErr != nil {
+			slog.Error("崩溃后强制关闭系统代理失败", "error", forceErr)
+		}
 	}
 	a.onProxyDisabled()
 	status := a.decorateStatus(ProxyStatus{Connected: false, Message: "内核已退出，代理已关闭"})
@@ -246,6 +253,9 @@ func (a *App) enableLocked() (ProxyStatus, error) {
 			return ProxyStatus{}, fmt.Errorf("TUN 未生效，请以管理员运行并确认已放置 wintun.dll")
 		}
 	} else if err := backend.SetSystemProxy(true); err != nil {
+		// 注册表可能已写入 7890，必须先清掉系统代理，避免停核后留下死代理。
+		_ = backend.SetSystemProxy(false)
+		_ = backend.ForceDisableEasyClashProxy()
 		if stopErr := a.manager.Stop(); stopErr != nil {
 			return ProxyStatus{}, fmt.Errorf("开启系统代理失败: %v；回滚停止 mihomo 也失败: %w", err, stopErr)
 		}
@@ -268,7 +278,10 @@ func (a *App) disableLocked() (ProxyStatus, error) {
 	var firstErr error
 	if err := backend.SetSystemProxy(false); err != nil {
 		slog.Error("关闭系统代理失败", "error", err)
-		firstErr = err
+		if forceErr := backend.ForceDisableEasyClashProxy(); forceErr != nil {
+			slog.Error("强制关闭系统代理失败", "error", forceErr)
+			firstErr = err
+		}
 	}
 	if a.manager != nil {
 		if err := a.manager.Stop(); err != nil {
@@ -324,21 +337,30 @@ func (a *App) reloadLocked() error {
 	if err := backend.ApplySettingsToConfig(a.manager.ConfigDir(), settings); err != nil {
 		slog.Warn("重载前写入运行设置失败", "error", err)
 	}
+	// 停核前先关系统代理，避免 Stop→Start 窗口期浏览器仍指向已死的 7890。
+	if err := backend.SetSystemProxy(false); err != nil {
+		slog.Warn("重载前关闭系统代理失败", "error", err)
+		_ = backend.ForceDisableEasyClashProxy()
+	}
 	if err := a.manager.Stop(); err != nil {
 		_ = backend.SetSystemProxy(false)
+		_ = backend.ForceDisableEasyClashProxy()
 		return fmt.Errorf("停止内核失败: %w", err)
 	}
 	if err := a.manager.Start(a.ctx); err != nil {
 		_ = backend.SetSystemProxy(false)
+		_ = backend.ForceDisableEasyClashProxy()
 		return fmt.Errorf("重新启动失败: %w", err)
 	}
 	if settings.Tun {
 		if err := backend.SetSystemProxy(false); err != nil {
 			slog.Warn("TUN 模式下关闭系统代理失败", "error", err)
+			_ = backend.ForceDisableEasyClashProxy()
 		}
 	} else if err := backend.SetSystemProxy(true); err != nil {
-		_ = a.manager.Stop()
 		_ = backend.SetSystemProxy(false)
+		_ = backend.ForceDisableEasyClashProxy()
+		_ = a.manager.Stop()
 		return fmt.Errorf("重载后开启系统代理失败: %w", err)
 	}
 	return nil

@@ -97,6 +97,15 @@ func alreadyOurs(key registry.Key) bool {
 	return server == proxyServerValue
 }
 
+func windowsProxyIsOurs() (bool, error) {
+	key, err := registry.OpenKey(registry.CURRENT_USER, internetSettingsKey, registry.QUERY_VALUE)
+	if err != nil {
+		return false, err
+	}
+	defer key.Close()
+	return alreadyOurs(key), nil
+}
+
 func restoreWindowsProxy(key registry.Key) (bool, error) {
 	valid, _, err := key.GetIntegerValue(proxyBackupValidValue)
 	if err != nil || valid == 0 {
@@ -129,8 +138,8 @@ func restoreWindowsProxy(key registry.Key) (bool, error) {
 	return true, nil
 }
 
-// ForceDisableEasyClashProxy 卸载/紧急清理：仅当当前代理指向本机 7890 时关闭。
-func ForceDisableEasyClashProxy() error {
+// forceDisableEasyClashProxyWindows 紧急清理：仅当当前代理指向本机 7890 时关闭。
+func forceDisableEasyClashProxyWindows() error {
 	key, err := registry.OpenKey(registry.CURRENT_USER, internetSettingsKey, registry.SET_VALUE|registry.QUERY_VALUE)
 	if err != nil {
 		return err
