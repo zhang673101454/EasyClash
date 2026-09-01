@@ -30,5 +30,7 @@ await fs.writeFile(path.join(root, 'build', 'windows', 'icon.ico'), icoBuffer)
 await fs.writeFile(path.join(root, 'tray.ico'), icoBuffer)
 await fs.writeFile(path.join(root, 'tray.png'), pngSizes[1])
 await fs.writeFile(path.join(root, 'frontend', 'src', 'assets', 'images', 'logo-universal.png'), logo512)
+// also write a favicon in the frontend assets so the web UI can reference it
+await fs.writeFile(path.join(root, 'frontend', 'src', 'assets', 'images', 'favicon.ico'), icoBuffer)
 
 console.log('Icons generated successfully.')
