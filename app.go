@@ -50,8 +50,22 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	a.manager = manager
+	manager.SetExitHandler(a.onMihomoUnexpectedExit)
 	a.startTray()
 	backend.RefreshAutoStartCommand()
+}
+
+func (a *App) onMihomoUnexpectedExit() {
+	if a.quitting.Load() {
+		return
+	}
+	slog.Error("mihomo 意外退出，正在关闭系统代理并同步状态")
+	if err := backend.SetSystemProxy(false); err != nil {
+		slog.Error("崩溃后关闭系统代理失败", "error", err)
+	}
+	a.onProxyDisabled()
+	status := a.decorateStatus(ProxyStatus{Connected: false, Message: "内核已退出，代理已关闭"})
+	a.emitStatus(status)
 }
 
 func (a *App) shutdown(ctx context.Context) {
@@ -206,6 +220,11 @@ func (a *App) AutoSelectBestNode() (ProxyStatus, error) {
 
 func (a *App) enableLocked() (ProxyStatus, error) {
 	settings := backend.LoadSettings(a.manager.ConfigDir())
+	if settings.Tun {
+		if err := backend.CheckTunPrerequisites(); err != nil {
+			return ProxyStatus{}, err
+		}
+	}
 	if err := backend.ApplySettingsToConfig(a.manager.ConfigDir(), settings); err != nil {
 		slog.Warn("写入运行设置失败", "error", err)
 	}
@@ -217,6 +236,14 @@ func (a *App) enableLocked() (ProxyStatus, error) {
 	if settings.Tun {
 		if err := backend.SetSystemProxy(false); err != nil {
 			slog.Warn("TUN 模式下关闭系统代理失败", "error", err)
+		}
+		ok, tunErr := a.client.TunEnabled(a.ctx)
+		if tunErr != nil || !ok {
+			_ = a.manager.Stop()
+			if tunErr != nil {
+				return ProxyStatus{}, fmt.Errorf("TUN 未生效: %w", tunErr)
+			}
+			return ProxyStatus{}, fmt.Errorf("TUN 未生效，请以管理员运行并确认已放置 wintun.dll")
 		}
 	} else if err := backend.SetSystemProxy(true); err != nil {
 		if stopErr := a.manager.Stop(); stopErr != nil {
@@ -293,11 +320,26 @@ func (a *App) reloadLocked() error {
 	if a.manager == nil || !a.manager.Running() {
 		return nil
 	}
+	settings := backend.LoadSettings(a.manager.ConfigDir())
+	if err := backend.ApplySettingsToConfig(a.manager.ConfigDir(), settings); err != nil {
+		slog.Warn("重载前写入运行设置失败", "error", err)
+	}
 	if err := a.manager.Stop(); err != nil {
+		_ = backend.SetSystemProxy(false)
 		return fmt.Errorf("停止内核失败: %w", err)
 	}
 	if err := a.manager.Start(a.ctx); err != nil {
+		_ = backend.SetSystemProxy(false)
 		return fmt.Errorf("重新启动失败: %w", err)
+	}
+	if settings.Tun {
+		if err := backend.SetSystemProxy(false); err != nil {
+			slog.Warn("TUN 模式下关闭系统代理失败", "error", err)
+		}
+	} else if err := backend.SetSystemProxy(true); err != nil {
+		_ = a.manager.Stop()
+		_ = backend.SetSystemProxy(false)
+		return fmt.Errorf("重载后开启系统代理失败: %w", err)
 	}
 	return nil
 }
@@ -569,6 +611,8 @@ func (a *App) AddSubscription(rawURL string, remark string) ([]SubscriptionItem,
 
 // SetSubscriptionRemark 更新订阅备注。
 func (a *App) SetSubscriptionRemark(id string, remark string) ([]SubscriptionItem, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.manager == nil {
 		return nil, fmt.Errorf("后端尚未初始化")
 	}
@@ -658,7 +702,10 @@ func (a *App) UseSubscription(id string) (ProxyStatus, error) {
 	var status ProxyStatus
 	if wasRunning {
 		if err := a.reloadLocked(); err != nil {
-			return ProxyStatus{}, fmt.Errorf("切换订阅失败: %w", err)
+			_ = backend.SetSystemProxy(false)
+			status = a.decorateStatus(ProxyStatus{Connected: false, Message: "切换失败，已关闭代理"})
+			a.emitStatus(status)
+			return status, fmt.Errorf("切换订阅失败: %w", err)
 		}
 		var statusErr error
 		status, statusErr = a.statusLocked()
@@ -765,7 +812,15 @@ func (a *App) SetTunMode(enabled bool) (ProxyStatus, error) {
 	if a.manager == nil {
 		return ProxyStatus{}, fmt.Errorf("后端尚未初始化")
 	}
-	s := backend.LoadSettings(a.manager.ConfigDir())
+
+	prev := backend.LoadSettings(a.manager.ConfigDir())
+	if enabled {
+		if err := backend.CheckTunPrerequisites(); err != nil {
+			return ProxyStatus{}, err
+		}
+	}
+
+	s := prev
 	s.Tun = enabled
 	s.Mode = "rule"
 	if err := backend.SaveSettings(a.manager.ConfigDir(), s); err != nil {
@@ -775,12 +830,23 @@ func (a *App) SetTunMode(enabled bool) (ProxyStatus, error) {
 		return a.statusLocked()
 	}
 	if err := a.reloadLocked(); err != nil {
+		_ = backend.SaveSettings(a.manager.ConfigDir(), prev)
+		_ = backend.SetSystemProxy(false)
 		return ProxyStatus{}, fmt.Errorf("切换 TUN 失败: %w", err)
 	}
 	if enabled {
-		_ = backend.SetSystemProxy(false)
-	} else if err := backend.SetSystemProxy(true); err != nil {
-		return ProxyStatus{}, fmt.Errorf("恢复系统代理失败: %w", err)
+		ok, tunErr := a.client.TunEnabled(a.ctx)
+		if tunErr != nil || !ok {
+			_ = backend.SaveSettings(a.manager.ConfigDir(), prev)
+			if rollbackErr := a.reloadLocked(); rollbackErr != nil {
+				_ = backend.SetSystemProxy(false)
+				return ProxyStatus{}, fmt.Errorf("TUN 未生效，回滚也失败: %v / %w", tunErr, rollbackErr)
+			}
+			if tunErr != nil {
+				return ProxyStatus{}, fmt.Errorf("TUN 未生效（需管理员权限与 wintun.dll）: %w", tunErr)
+			}
+			return ProxyStatus{}, fmt.Errorf("TUN 未生效，请确认以管理员运行，并已放置 wintun.dll")
+		}
 	}
 	if err := a.client.PatchMode(a.ctx, "rule"); err != nil {
 		slog.Warn("同步规则模式失败", "error", err)

@@ -667,6 +667,26 @@ func (c *MihomoClient) ReadTraffic(ctx context.Context) (TrafficSnapshot, error)
 	return TrafficSnapshot{UploadTotal: snap.UploadTotal, DownloadTotal: snap.DownloadTotal}, nil
 }
 
+// TunEnabled 查询内核配置中 TUN 是否已启用。
+func (c *MihomoClient) TunEnabled(ctx context.Context) (bool, error) {
+	var cfg map[string]any
+	if err := c.doJSON(ctx, http.MethodGet, "/configs", nil, &cfg); err != nil {
+		return false, err
+	}
+	tun, _ := cfg["tun"].(map[string]any)
+	if tun == nil {
+		return false, nil
+	}
+	switch v := tun["enable"].(type) {
+	case bool:
+		return v, nil
+	case string:
+		return strings.EqualFold(v, "true"), nil
+	default:
+		return false, nil
+	}
+}
+
 func isHTTPProvider(vehicleType string) bool {
 	switch strings.ToLower(vehicleType) {
 	case "http", "file":

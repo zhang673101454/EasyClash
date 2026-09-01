@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"context"
@@ -20,12 +21,14 @@ var defaultConfig []byte
 
 // ProxyManager 负责 mihomo 进程的启动、停止与运行状态。
 type ProxyManager struct {
-	mu         sync.Mutex
-	cmd        *exec.Cmd
-	done       chan struct{}
-	logFile    *os.File
-	configDir  string
-	binaryPath string
+	mu          sync.Mutex
+	cmd         *exec.Cmd
+	done        chan struct{}
+	logFile     *os.File
+	configDir   string
+	binaryPath  string
+	stopping    atomic.Bool
+	exitHandler func()
 }
 
 // NewProxyManager 创建管理器，并准备配置目录。
@@ -57,6 +60,13 @@ func NewProxyManager() (*ProxyManager, error) {
 	return &ProxyManager{configDir: configDir}, nil
 }
 
+// SetExitHandler 注册内核意外退出回调（预期 Stop 不会触发）。
+func (m *ProxyManager) SetExitHandler(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.exitHandler = fn
+}
+
 // Start 启动 mihomo，并等待本机 API 就绪。
 func (m *ProxyManager) Start(ctx context.Context) error {
 	m.mu.Lock()
@@ -74,6 +84,9 @@ func (m *ProxyManager) Start(ctx context.Context) error {
 		return err
 	}
 	m.binaryPath = bin
+	if err := EnsureWintunBeside(bin); err != nil {
+		slog.Warn("准备 wintun.dll 失败", "error", err)
+	}
 
 	cmd := exec.Command(bin, "-d", m.configDir)
 	logPath := filepath.Join(m.configDir, "mihomo.log")
@@ -85,6 +98,7 @@ func (m *ProxyManager) Start(ctx context.Context) error {
 	cmd.Stderr = logFile
 	prepareCommand(cmd)
 
+	m.stopping.Store(false)
 	slog.Info("启动 mihomo", "binary", bin, "configDir", m.configDir, "log", logPath)
 	if err := cmd.Start(); err != nil {
 		if closeErr := logFile.Close(); closeErr != nil {
@@ -94,15 +108,30 @@ func (m *ProxyManager) Start(ctx context.Context) error {
 	}
 
 	done := make(chan struct{})
-	go func() {
-		waitErr := cmd.Wait()
+	go func(proc *exec.Cmd, doneCh chan struct{}) {
+		waitErr := proc.Wait()
 		if waitErr != nil {
 			slog.Warn("mihomo 进程已退出", "error", waitErr)
 		} else {
 			slog.Info("mihomo 进程已退出")
 		}
-		close(done)
-	}()
+		close(doneCh)
+
+		unexpected := !m.stopping.Load()
+		m.mu.Lock()
+		handler := m.exitHandler
+		if m.done == doneCh {
+			m.cmd = nil
+			m.done = nil
+			m.closeLogLocked()
+			clearMihomoPID(m.configDir)
+		}
+		m.mu.Unlock()
+
+		if unexpected && handler != nil {
+			handler()
+		}
+	}(cmd, done)
 
 	m.cmd = cmd
 	m.done = done
@@ -114,6 +143,7 @@ func (m *ProxyManager) Start(ctx context.Context) error {
 	client := NewMihomoClient()
 	if err := client.WaitReady(waitCtx); err != nil {
 		hint := lastLogLines(logPath, 12)
+		m.stopping.Store(true)
 		stopErr := m.stopLocked()
 		if stopErr != nil {
 			return fmt.Errorf("等待 mihomo API 就绪失败: %v；停止进程也失败: %w；内核日志: %s", err, stopErr, hint)
@@ -129,6 +159,7 @@ func (m *ProxyManager) Start(ctx context.Context) error {
 func (m *ProxyManager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.stopping.Store(true)
 	return m.stopLocked()
 }
 
@@ -137,6 +168,9 @@ func (m *ProxyManager) stopLocked() error {
 	defer clearMihomoPID(m.configDir)
 	if m.cmd == nil || m.cmd.Process == nil {
 		killLeftoverMihomo(m.configDir)
+		if mihomoAPIReachable() {
+			return fmt.Errorf("仍有残留 mihomo 占用控制端口")
+		}
 		return nil
 	}
 
@@ -146,15 +180,25 @@ func (m *ProxyManager) stopLocked() error {
 		slog.Warn("结束 mihomo 进程时出错", "error", err)
 	}
 
+	timedOut := false
 	if m.done != nil {
 		select {
 		case <-m.done:
 		case <-time.After(1200 * time.Millisecond):
+			timedOut = true
 			slog.Warn("等待 mihomo 退出超时", "pid", pid)
 		}
 	}
 	m.cmd = nil
 	m.done = nil
+
+	if timedOut {
+		_ = terminateMihomoPID(pid)
+		killLeftoverMihomo(m.configDir)
+		if mihomoAPIReachable() {
+			return fmt.Errorf("停止 mihomo 超时，进程可能仍在运行 (pid=%d)", pid)
+		}
+	}
 	return nil
 }
 

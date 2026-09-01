@@ -68,6 +68,11 @@ func (a *App) showMainWindow() {
 
 func (a *App) requestQuit() {
 	a.quitting.Store(true)
+	a.mu.Lock()
+	if _, err := a.disableLocked(); err != nil {
+		slog.Error("退出前关闭代理失败", "error", err)
+	}
+	a.mu.Unlock()
 	systray.Quit()
 	if a.ctx != nil {
 		runtime.Quit(a.ctx)

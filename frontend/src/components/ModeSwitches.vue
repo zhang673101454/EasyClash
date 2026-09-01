@@ -47,7 +47,7 @@ const store = useProxyStore()
         </span>
         <div class="min-w-0">
           <p class="text-[11px] font-medium" :style="{ color: store.tun ? 'var(--accent-text)' : 'var(--text)' }">Tun 模式</p>
-          <p class="mt-0.5 text-[10px] text-[var(--text-faint)]">{{ store.tun ? '虚拟网卡' : '点击切换' }}</p>
+          <p class="mt-0.5 text-[10px] text-[var(--text-faint)]">{{ store.tun ? '虚拟网卡' : '需管理员' }}</p>
         </div>
       </div>
     </button>

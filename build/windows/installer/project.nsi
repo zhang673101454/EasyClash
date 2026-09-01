@@ -49,6 +49,7 @@ VIAddVersionKey "ProductName"     "${INFO_PRODUCTNAME}"
 ManifestDPIAware true
 
 !include "MUI.nsh"
+!include "LogicLib.nsh"
 
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
@@ -96,6 +97,7 @@ Section
 
     !insertmacro wails.files
     File "..\..\..\resources\mihomo.exe"
+    File "..\..\..\resources\wintun.dll"
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
@@ -108,6 +110,18 @@ SectionEnd
 
 Section "uninstall"
     !insertmacro wails.setShellContext
+
+    # 先结束进程，并仅在系统代理指向本机 7890 时关闭，避免残留
+    ExecWait 'taskkill /F /IM ${PRODUCT_EXECUTABLE} /T'
+    ExecWait 'taskkill /F /IM mihomo.exe /T'
+    ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" "ProxyServer"
+    ${If} $0 == "127.0.0.1:7890"
+        WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" "ProxyEnable" 0
+    ${EndIf}
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" "EasyClashProxyBackup"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" "EasyClashProxyServer"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" "EasyClashProxyOverride"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" "EasyClashProxyEnable"
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 

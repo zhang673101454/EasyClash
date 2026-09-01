@@ -496,6 +496,10 @@ export const useProxyStore = defineStore('proxy', () => {
           nodeName.value = info.nodeName
         }
         latencyMs.value = info.latencyMs || 0
+      } else {
+        connected.value = false
+        upRate.value = 0
+        downRate.value = 0
       }
     } catch {
       /* ignore */

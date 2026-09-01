@@ -5,6 +5,9 @@ frontend/dist
 frontend/wailsjs/runtime/runtime.js.map
 resources/mihomo
 resources/mihomo.exe
+resources/wintun.dll
+resources/wintun.zip
+resources/wintun-extract/
 resources/*.zip
 *.syso
 .DS_Store

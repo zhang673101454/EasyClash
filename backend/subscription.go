@@ -37,6 +37,10 @@ func ListSubscriptions(configDir string) ([]Subscription, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			if recovered := subscriptionsFromProviders(configDir); len(recovered) > 0 {
+				if persistErr := persistSubscriptions(configDir, recovered); persistErr != nil {
+					slog.Warn("写入恢复后的订阅失败", "error", persistErr)
+					return normalizeRecovered(recovered), nil
+				}
 				return recovered, nil
 			}
 			return []Subscription{}, nil
@@ -348,7 +352,22 @@ func subscriptionsFromProviders(configDir string) []Subscription {
 		if raw == "" {
 			continue
 		}
-		items = append(items, Subscription{ID: key, URL: raw, Enabled: true})
+		items = append(items, Subscription{ID: key, URL: raw, Enabled: false})
+	}
+	return items
+}
+
+func normalizeRecovered(items []Subscription) []Subscription {
+	seen := false
+	for i := range items {
+		if !items[i].Enabled {
+			continue
+		}
+		if seen {
+			items[i].Enabled = false
+			continue
+		}
+		seen = true
 	}
 	return items
 }

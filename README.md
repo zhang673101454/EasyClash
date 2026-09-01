@@ -115,7 +115,15 @@ npx vite preview --host 127.0.0.1 --port 4173
 
 ## 4. 怎么打包
 
-先把 `mihomo.exe` 放到 `resources\mihomo.exe`（见第 2 节），安装包脚本会把它打进去。
+先把 `mihomo.exe` 和 `wintun.dll` 放到 `resources\`（见第 2 节），安装包脚本会把它们打进去。
+
+TUN 依赖的 `wintun.dll` 官方来源：[https://www.wintun.net/](https://www.wintun.net/)（下载 zip 后取 `bin\amd64\wintun.dll`）。也可用脚本：
+
+```bat
+powershell -ExecutionPolicy Bypass -File scripts\fetch-wintun.ps1
+```
+
+开启 TUN 需要**以管理员身份运行** EasyClash。
 
 ### 4.1 绿色版 exe
 
@@ -138,6 +146,7 @@ e:\code\easy-clash\build\bin\EasyClash.exe
 SomeFolder\
   EasyClash.exe
   mihomo.exe          （或 resources\mihomo.exe）
+  wintun.dll          （TUN 模式需要；官方 https://www.wintun.net/）
 ```
 
 ### 4.2 安装包（推荐）
@@ -154,7 +163,7 @@ winget install --id NSIS.NSIS -e --source winget
 makensis /VERSION
 ```
 
-2. 确认 `resources\mihomo.exe` 已存在。`build\windows\installer\project.nsi` 会把它复制到安装目录。
+2. 确认 `resources\mihomo.exe` 与 `resources\wintun.dll` 已存在。`project.nsi` 会把它们复制到安装目录。
 
 3. 在项目根目录打包：
 

@@ -14,10 +14,14 @@ const (
 	internetSettingsKey           = `Software\Microsoft\Windows\CurrentVersion\Internet Settings`
 	internetOptionSettingsChanged = 39
 	internetOptionRefresh         = 37
+	proxyBackupServerValue        = "EasyClashProxyServer"
+	proxyBackupOverrideValue      = "EasyClashProxyOverride"
+	proxyBackupEnableValue        = "EasyClashProxyEnable"
+	proxyBackupValidValue         = "EasyClashProxyBackup"
 )
 
 func setWindowsProxy(enable bool) error {
-	key, err := registry.OpenKey(registry.CURRENT_USER, internetSettingsKey, registry.SET_VALUE)
+	key, err := registry.OpenKey(registry.CURRENT_USER, internetSettingsKey, registry.SET_VALUE|registry.QUERY_VALUE)
 	if err != nil {
 		return fmt.Errorf("打开代理注册表失败: %w", err)
 	}
@@ -27,25 +31,121 @@ func setWindowsProxy(enable bool) error {
 		}
 	}()
 
-	var enableValue uint32
 	if enable {
-		enableValue = 1
+		if err := backupWindowsProxy(key); err != nil {
+			slog.Warn("备份原系统代理失败", "error", err)
+		}
 		if err := key.SetStringValue("ProxyServer", proxyServerValue); err != nil {
 			return fmt.Errorf("写入 ProxyServer 失败: %w", err)
 		}
 		if err := key.SetStringValue("ProxyOverride", "localhost;127.*;10.*;172.16.*;192.168.*;<local>"); err != nil {
 			return fmt.Errorf("写入 ProxyOverride 失败: %w", err)
 		}
-	}
-
-	if err := key.SetDWordValue("ProxyEnable", enableValue); err != nil {
-		return fmt.Errorf("写入 ProxyEnable 失败: %w", err)
+		if err := key.SetDWordValue("ProxyEnable", 1); err != nil {
+			return fmt.Errorf("写入 ProxyEnable 失败: %w", err)
+		}
+	} else {
+		if restored, err := restoreWindowsProxy(key); err != nil {
+			slog.Warn("还原原系统代理失败，将直接关闭", "error", err)
+			if setErr := key.SetDWordValue("ProxyEnable", 0); setErr != nil {
+				return fmt.Errorf("写入 ProxyEnable 失败: %w", setErr)
+			}
+		} else if !restored {
+			if err := key.SetDWordValue("ProxyEnable", 0); err != nil {
+				return fmt.Errorf("写入 ProxyEnable 失败: %w", err)
+			}
+		}
 	}
 
 	if err := notifyProxyChange(); err != nil {
 		return err
 	}
 	return nil
+}
+
+func backupWindowsProxy(key registry.Key) error {
+	if alreadyOurs(key) {
+		return nil
+	}
+	server, _, _ := key.GetStringValue("ProxyServer")
+	override, _, _ := key.GetStringValue("ProxyOverride")
+	enable, _, err := key.GetIntegerValue("ProxyEnable")
+	if err != nil {
+		enable = 0
+	}
+	if err := key.SetStringValue(proxyBackupServerValue, server); err != nil {
+		return err
+	}
+	if err := key.SetStringValue(proxyBackupOverrideValue, override); err != nil {
+		return err
+	}
+	if err := key.SetDWordValue(proxyBackupEnableValue, uint32(enable)); err != nil {
+		return err
+	}
+	return key.SetDWordValue(proxyBackupValidValue, 1)
+}
+
+func alreadyOurs(key registry.Key) bool {
+	server, _, err := key.GetStringValue("ProxyServer")
+	if err != nil {
+		return false
+	}
+	enable, _, err := key.GetIntegerValue("ProxyEnable")
+	if err != nil || enable == 0 {
+		return false
+	}
+	return server == proxyServerValue
+}
+
+func restoreWindowsProxy(key registry.Key) (bool, error) {
+	valid, _, err := key.GetIntegerValue(proxyBackupValidValue)
+	if err != nil || valid == 0 {
+		return false, nil
+	}
+	server, _, _ := key.GetStringValue(proxyBackupServerValue)
+	override, _, _ := key.GetStringValue(proxyBackupOverrideValue)
+	enable, _, err := key.GetIntegerValue(proxyBackupEnableValue)
+	if err != nil {
+		enable = 0
+	}
+
+	if server != "" {
+		if err := key.SetStringValue("ProxyServer", server); err != nil {
+			return false, err
+		}
+	}
+	if override != "" {
+		if err := key.SetStringValue("ProxyOverride", override); err != nil {
+			return false, err
+		}
+	}
+	if err := key.SetDWordValue("ProxyEnable", uint32(enable)); err != nil {
+		return false, err
+	}
+	_ = key.DeleteValue(proxyBackupValidValue)
+	_ = key.DeleteValue(proxyBackupServerValue)
+	_ = key.DeleteValue(proxyBackupOverrideValue)
+	_ = key.DeleteValue(proxyBackupEnableValue)
+	return true, nil
+}
+
+// ForceDisableEasyClashProxy 卸载/紧急清理：仅当当前代理指向本机 7890 时关闭。
+func ForceDisableEasyClashProxy() error {
+	key, err := registry.OpenKey(registry.CURRENT_USER, internetSettingsKey, registry.SET_VALUE|registry.QUERY_VALUE)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+
+	server, _, _ := key.GetStringValue("ProxyServer")
+	if server == proxyServerValue {
+		_ = key.SetDWordValue("ProxyEnable", 0)
+	}
+	_ = key.DeleteValue(proxyBackupValidValue)
+	_ = key.DeleteValue(proxyBackupServerValue)
+	_ = key.DeleteValue(proxyBackupOverrideValue)
+	_ = key.DeleteValue(proxyBackupEnableValue)
+	return notifyProxyChange()
 }
 
 func notifyProxyChange() error {
