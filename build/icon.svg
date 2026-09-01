@@ -1,18 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="EasyClash icon">
-  <!-- Rounded square background -->
-  <rect x="0" y="0" width="1024" height="1024" rx="160" ry="160" fill="#66C7FF" />
-  <!-- Minimalist cat face silhouette -->
-  <g transform="translate(160,200) scale(0.7)">
-    <!-- Ears -->
-    <path d="M120 40 L200 0 L220 80 Q160 40 120 40 Z" fill="#FFFFFF" opacity="0.95" transform="translate(80,0)" />
-    <path d="M420 40 L340 0 L320 80 Q380 40 420 40 Z" fill="#FFFFFF" opacity="0.95" transform="translate(-80,0)" />
-    <!-- Head / face rounded shape -->
-    <path d="M256 96 C160 96 96 160 96 256 C96 352 160 416 256 416 C352 416 416 352 416 256 C416 160 352 96 256 96 Z" fill="#FFFFFF" />
-    <!-- Eyes (simple dots) -->
-    <circle cx="192" cy="240" r="16" fill="#66C7FF" />
-    <circle cx="320" cy="240" r="16" fill="#66C7FF" />
-    <!-- Mouth (minimal line) -->
-    <path d="M256 288 Q256 312 280 312" stroke="#66C7FF" stroke-width="12" stroke-linecap="round" fill="none" />
-  </g>
+  <!-- Soft light-blue tile, Clash-like -->
+  <rect width="1024" height="1024" rx="200" fill="#8ED4FC"/>
+  <!-- One-piece white cat: ears + round head. No mouth for small-size clarity. -->
+  <path fill="#FFFFFF" d="
+    M 286 430
+    L 340 170
+    L 430 400
+    C 456 384 484 376 512 376
+    C 540 376 568 384 594 400
+    L 684 170
+    L 738 430
+    C 812 470 848 560 848 640
+    C 848 780 704 888 512 888
+    C 320 888 176 780 176 640
+    C 176 560 212 470 286 430
+    Z"/>
+  <!-- Eyes only -->
+  <circle cx="416" cy="620" r="42" fill="#8ED4FC"/>
+  <circle cx="608" cy="620" r="42" fill="#8ED4FC"/>
 </svg>

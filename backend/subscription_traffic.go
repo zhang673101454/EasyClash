@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,6 +21,8 @@ const subscriptionTrafficFileName = "subscription_traffic.json"
 var subscriptionTrafficUserAgents = []string{
 	"clash.meta",
 	"ClashforWindows/0.20.39",
+	"clash",
+	"mihomo",
 }
 
 // SubscriptionTraffic 来自 subscription-userinfo 响应头的流量配额。
@@ -98,7 +102,7 @@ func RefreshSubscriptionTraffic(configDir, id string) (SubscriptionTraffic, erro
 		return SubscriptionTraffic{}, fmt.Errorf("找不到该订阅")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	traffic, err := fetchSubscriptionUserinfo(ctx, rawURL)
 	if err != nil {
@@ -127,7 +131,7 @@ func RefreshAllSubscriptionTraffic(configDir string) (map[string]SubscriptionTra
 		cache = map[string]SubscriptionTraffic{}
 	}
 	for _, item := range items {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		traffic, fetchErr := fetchSubscriptionUserinfo(ctx, item.URL)
 		cancel()
 		if fetchErr != nil {
@@ -143,43 +147,97 @@ func RefreshAllSubscriptionTraffic(configDir string) (map[string]SubscriptionTra
 }
 
 func fetchSubscriptionUserinfo(ctx context.Context, rawURL string) (SubscriptionTraffic, error) {
+	clients := subscriptionTrafficClients()
 	var lastErr error
 	for _, ua := range subscriptionTrafficUserAgents {
-		traffic, err := fetchSubscriptionUserinfoOnce(ctx, rawURL, ua)
-		if err == nil {
-			return traffic, nil
+		for _, client := range clients {
+			traffic, err := fetchSubscriptionUserinfoOnce(ctx, client, rawURL, ua)
+			if err == nil {
+				return traffic, nil
+			}
+			lastErr = err
 		}
-		lastErr = err
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("该订阅未返回流量信息")
 	}
+	if !localMixedProxyAvailable() && strings.Contains(lastErr.Error(), "请求订阅失败") {
+		return SubscriptionTraffic{}, fmt.Errorf("%w（可先点击订阅开启代理后再刷新流量）", lastErr)
+	}
 	return SubscriptionTraffic{}, lastErr
 }
 
-func fetchSubscriptionUserinfoOnce(ctx context.Context, rawURL, userAgent string) (SubscriptionTraffic, error) {
+func subscriptionTrafficClients() []*http.Client {
+	clients := make([]*http.Client, 0, 2)
+	if localMixedProxyAvailable() {
+		proxyURL, err := url.Parse("http://" + proxyServerValue)
+		if err == nil {
+			clients = append(clients, &http.Client{
+				Timeout: 20 * time.Second,
+				Transport: &http.Transport{
+					Proxy: http.ProxyURL(proxyURL),
+				},
+			})
+		}
+	}
+	clients = append(clients, &http.Client{
+		Timeout: 20 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+		},
+	})
+	return clients
+}
+
+func localMixedProxyAvailable() bool {
+	conn, err := net.DialTimeout("tcp", proxyServerValue, 300*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func fetchSubscriptionUserinfoOnce(ctx context.Context, client *http.Client, rawURL, userAgent string) (SubscriptionTraffic, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return SubscriptionTraffic{}, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 
-	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return SubscriptionTraffic{}, fmt.Errorf("请求订阅失败: %w", err)
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<20))
 
-	info := resp.Header.Get("subscription-userinfo")
-	if info == "" {
-		info = resp.Header.Get("Subscription-Userinfo")
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return SubscriptionTraffic{}, fmt.Errorf("订阅返回 HTTP %d", resp.StatusCode)
 	}
+
+	info := firstHeaderValue(resp.Header, "subscription-userinfo", "Subscription-Userinfo")
 	if info == "" {
 		return SubscriptionTraffic{}, fmt.Errorf("该订阅未返回流量信息")
 	}
 	return parseSubscriptionUserinfo(info), nil
+}
+
+func firstHeaderValue(h http.Header, names ...string) string {
+	for _, name := range names {
+		if v := strings.TrimSpace(h.Get(name)); v != "" {
+			return v
+		}
+	}
+	// 兼容部分网关把 header key 改写成非规范大小写
+	for k, values := range h {
+		if strings.EqualFold(k, "subscription-userinfo") && len(values) > 0 {
+			if v := strings.TrimSpace(values[0]); v != "" {
+				return v
+			}
+		}
+	}
+	return ""
 }
 
 func parseSubscriptionUserinfo(raw string) SubscriptionTraffic {
@@ -193,7 +251,12 @@ func parseSubscriptionUserinfo(raw string) SubscriptionTraffic {
 		key := strings.ToLower(strings.TrimSpace(kv[0]))
 		val, err := strconv.ParseInt(strings.TrimSpace(kv[1]), 10, 64)
 		if err != nil {
-			continue
+			// 兼容少数机场返回浮点字节数
+			if f, fErr := strconv.ParseFloat(strings.TrimSpace(kv[1]), 64); fErr == nil {
+				val = int64(f)
+			} else {
+				continue
+			}
 		}
 		switch key {
 		case "upload":
@@ -205,6 +268,9 @@ func parseSubscriptionUserinfo(raw string) SubscriptionTraffic {
 		case "expire":
 			traffic.Expire = val
 		}
+	}
+	if traffic.Expire > 32_000_000_000 {
+		traffic.Expire /= 1000
 	}
 	traffic.UpdatedAt = time.Now().Unix()
 	return traffic

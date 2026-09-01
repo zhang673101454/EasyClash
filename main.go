@@ -43,6 +43,14 @@ func main() {
 		Bind: []interface{}{
 			app,
 		},
+		// 只允许一个实例：再启动时唤醒已有窗口
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: "com.easyclash.app.single-instance",
+			OnSecondInstanceLaunch: func(_ options.SecondInstanceData) {
+				slog.Info("检测到已有实例，唤醒主窗口")
+				app.showMainWindow()
+			},
+		},
 		Windows: &windows.Options{
 			Theme:                             windows.Dark,
 			WebviewIsTransparent:              true,

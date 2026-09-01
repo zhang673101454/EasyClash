@@ -337,6 +337,9 @@ export const useProxyStore = defineStore('proxy', () => {
       applyStatus(status)
       await refreshSubscriptions()
       void refreshNodes()
+      if (!turningOff) {
+        void refreshSubscriptionTraffic(item.id, true)
+      }
     } catch (err) {
       showToast(errorMessage(err))
       await refresh()
