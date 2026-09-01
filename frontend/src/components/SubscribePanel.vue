@@ -114,8 +114,8 @@ async function refreshTraffic(event: Event, id: string) {
     <article
       v-for="item in store.subscriptions"
       :key="item.id"
-      class="sp-card cursor-pointer rounded-xl px-3 py-2.5 transition"
-      :class="isActive(item) ? 'sp-card-active' : 'hover:border-[var(--border-strong)]'"
+      class="sp-card sp-card-sub cursor-pointer rounded-xl px-3 py-2.5 transition"
+      :class="isActive(item) ? 'sp-card-in-use' : ''"
       @click="store.toggleSubscription(item)"
     >
       <div class="flex items-start justify-between gap-2">
@@ -140,7 +140,7 @@ async function refreshTraffic(event: Event, id: string) {
             >
               {{ titleOf(item) }}
             </p>
-            <span class="sp-badge shrink-0" :class="isActive(item) ? 'sp-badge-active' : 'sp-badge-idle'">
+            <span class="sp-badge shrink-0" :class="isActive(item) ? 'sp-badge-in-use' : 'sp-badge-idle'">
               {{ isActive(item) ? '使用中' : '待用' }}
             </span>
           </div>

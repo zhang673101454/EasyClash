@@ -16,6 +16,10 @@ function hideWindow() {
   }
 }
 
+function goHome() {
+  store.goHome()
+}
+
 function onToggleTheme() {
   theme.value = toggleTheme()
 }
@@ -23,7 +27,13 @@ function onToggleTheme() {
 
 <template>
   <header class="app-header flex h-12 shrink-0 items-center justify-between px-3 [--wails-draggable:drag]">
-    <div class="flex min-w-0 items-center gap-2">
+    <button
+      class="sp-brand-btn flex min-w-0 items-center gap-2 text-left [--wails-draggable:no-drag]"
+      type="button"
+      aria-label="回到主界面"
+      title="回到主界面"
+      @click="goHome"
+    >
       <span class="sp-logo">
         <LogoMark />
       </span>
@@ -39,7 +49,7 @@ function onToggleTheme() {
           {{ store.connected ? (store.nodeName || '已连接') : '未连接' }}
         </p>
       </div>
-    </div>
+    </button>
     <div class="flex items-center gap-0.5 [--wails-draggable:no-drag]">
       <button
         class="sp-btn-icon"

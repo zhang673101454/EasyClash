@@ -75,7 +75,7 @@ function delayColor(node: ProxyNode): string {
         v-for="node in store.visibleNodes"
         :key="node.name"
         class="sp-card flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition"
-        :class="node.selected ? 'sp-card-active' : 'hover:border-[var(--border-strong)]'"
+        :class="node.selected ? 'sp-card-active' : ''"
         type="button"
         :disabled="store.loading"
         @click="store.selectNode(node.name)"

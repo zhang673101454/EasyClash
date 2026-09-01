@@ -11,7 +11,7 @@ const store = useProxyStore()
     @click.self="store.dismissModal()"
   >
     <div
-      class="animate-toast-in w-full max-w-[240px] rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-4 shadow-xl"
+      class="animate-toast-in w-full max-w-[240px] rounded-2xl bg-[var(--bg-elevated)] px-4 py-4 shadow-xl"
     >
       <p class="text-sm font-medium text-[var(--text)]">{{ store.modalTitle }}</p>
       <p class="mt-2 text-xs leading-relaxed text-[var(--text-muted)]">{{ store.modalMessage }}</p>

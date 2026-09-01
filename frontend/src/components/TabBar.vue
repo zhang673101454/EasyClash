@@ -11,12 +11,12 @@ const tabs = [
 
 <template>
   <nav v-if="!store.showSettings" class="px-3 pb-3 pt-1 [--wails-draggable:no-drag]">
-    <div class="sp-segment">
+    <div class="sp-picker">
       <button
         v-for="item in tabs"
         :key="item.id"
-        class="sp-segment-btn"
-        :class="store.tab === item.id ? 'sp-segment-btn-active' : ''"
+        class="sp-picker-btn sp-picker-btn-simple"
+        :class="store.tab === item.id ? 'sp-picker-btn-active' : ''"
         type="button"
         @click="store.tab = item.id"
       >

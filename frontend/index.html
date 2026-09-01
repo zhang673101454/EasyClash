@@ -7,12 +7,11 @@
     <link rel="icon" href="./src/assets/images/favicon.ico" />
     <script>
       try {
-        document.documentElement.dataset.theme =
-          localStorage.getItem('easy-clash-theme') === 'light' ||
-          localStorage.getItem('simple-proxy-theme') === 'light'
-            ? 'light'
-            : 'dark'
-      } catch (e) {}
+        var saved = localStorage.getItem('easy-clash-theme') || localStorage.getItem('simple-proxy-theme')
+        document.documentElement.dataset.theme = saved === 'dark' ? 'dark' : 'light'
+      } catch (e) {
+        document.documentElement.dataset.theme = 'light'
+      }
     </script>
 </head>
 <body>

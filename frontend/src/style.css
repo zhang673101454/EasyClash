@@ -1,53 +1,21 @@
 @import "tailwindcss";
 
 :root,
-[data-theme="dark"] {
-  --bg: #020617;
-  --bg-elevated: #0f172a;
-  --surface: rgb(255 255 255 / 0.05);
-  --surface-hover: rgb(255 255 255 / 0.08);
-  --border: rgb(255 255 255 / 0.14);
-  --border-strong: rgb(255 255 255 / 0.24);
-  --border-subtle: rgb(255 255 255 / 0.09);
-  --text: #e2e8f0;
-  --text-muted: #94a3b8;
-  --text-faint: #64748b;
-  --accent: #22d3ee;
-  --accent-soft: rgb(34 211 238 / 0.18);
-  --accent-text: #a5f3fc;
-  --accent-border: rgb(34 211 238 / 0.45);
-  --danger: #fda4af;
-  --ok: #86efac;
-  --warn: #fcd34d;
-  --timeout: #fb7185;
-  --toggle-off: #1e293b;
-  --toggle-off-inner: #0f172a;
-  --toggle-off-icon: #94a3b8;
-  --overlay: rgb(2 6 23 / 0.4);
-  --toast: rgb(244 63 94 / 0.92);
-  --toast-ok: rgb(22 163 74 / 0.94);
-  --toast-err: rgb(244 63 94 / 0.92);
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.25);
-  --shadow-card: 0 1px 3px rgb(0 0 0 / 0.2);
-  --shadow-card-active: 0 4px 14px rgb(34 211 238 / 0.12);
-  color-scheme: dark;
-}
-
 [data-theme="light"] {
   --bg: #f4f6f8;
   --bg-elevated: #ffffff;
   --surface: rgb(15 23 42 / 0.04);
-  --surface-hover: rgb(15 23 42 / 0.07);
-  --border: rgb(15 23 42 / 0.14);
-  --border-strong: rgb(15 23 42 / 0.22);
-  --border-subtle: rgb(15 23 42 / 0.08);
+  --surface-hover: rgb(15 23 42 / 0.06);
+  --border: rgb(15 23 42 / 0.07);
+  --border-strong: rgb(15 23 42 / 0.12);
+  --border-subtle: rgb(15 23 42 / 0.04);
   --text: #0f172a;
   --text-muted: #475569;
   --text-faint: #94a3b8;
   --accent: #0891b2;
-  --accent-soft: rgb(8 145 178 / 0.12);
+  --accent-soft: rgb(8 145 178 / 0.1);
   --accent-text: #0e7490;
-  --accent-border: rgb(8 145 178 / 0.45);
+  --accent-border: rgb(8 145 178 / 0.28);
   --danger: #e11d48;
   --ok: #15803d;
   --warn: #b45309;
@@ -59,10 +27,42 @@
   --toast: rgb(225 29 72 / 0.92);
   --toast-ok: rgb(22 163 74 / 0.94);
   --toast-err: rgb(225 29 72 / 0.92);
-  --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.06);
-  --shadow-card: 0 1px 3px rgb(15 23 42 / 0.08);
-  --shadow-card-active: 0 4px 14px rgb(8 145 178 / 0.15);
+  --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04);
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.05), 0 4px 12px rgb(15 23 42 / 0.03);
+  --shadow-card-active: 0 2px 8px rgb(8 145 178 / 0.12), 0 8px 20px rgb(8 145 178 / 0.08);
   color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #020617;
+  --bg-elevated: #0f172a;
+  --surface: rgb(255 255 255 / 0.05);
+  --surface-hover: rgb(255 255 255 / 0.07);
+  --border: rgb(255 255 255 / 0.09);
+  --border-strong: rgb(255 255 255 / 0.16);
+  --border-subtle: rgb(255 255 255 / 0.05);
+  --text: #e2e8f0;
+  --text-muted: #94a3b8;
+  --text-faint: #64748b;
+  --accent: #22d3ee;
+  --accent-soft: rgb(34 211 238 / 0.14);
+  --accent-text: #a5f3fc;
+  --accent-border: rgb(34 211 238 / 0.32);
+  --danger: #fda4af;
+  --ok: #86efac;
+  --warn: #fcd34d;
+  --timeout: #fb7185;
+  --toggle-off: #1e293b;
+  --toggle-off-inner: #0f172a;
+  --toggle-off-icon: #94a3b8;
+  --overlay: rgb(2 6 23 / 0.4);
+  --toast: rgb(244 63 94 / 0.92);
+  --toast-ok: rgb(22 163 74 / 0.94);
+  --toast-err: rgb(244 63 94 / 0.92);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.2);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.18), 0 4px 12px rgb(0 0 0 / 0.12);
+  --shadow-card-active: 0 2px 8px rgb(34 211 238 / 0.1), 0 8px 20px rgb(34 211 238 / 0.06);
+  color-scheme: dark;
 }
 
 @keyframes toggle-pop {
@@ -120,10 +120,10 @@ body {
 }
 
 .sp-input {
-  border: 1.5px solid var(--border);
+  border: 1px solid var(--border-subtle);
   background: var(--bg-elevated);
   color: var(--text);
-  box-shadow: inset 0 1px 2px color-mix(in srgb, black 4%, transparent);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, black 2%, transparent);
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
@@ -132,30 +132,170 @@ body {
 }
 
 .sp-input:focus {
-  border-color: var(--accent-border);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent-border) 70%, var(--border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .sp-card {
-  border: 1.5px solid var(--border);
+  border: 1px solid transparent;
   background: var(--bg-elevated);
   box-shadow:
     var(--shadow-card),
-    inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
-  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+    inset 0 1px 0 color-mix(in srgb, white 40%, transparent);
+  transition: background 0.2s, box-shadow 0.2s;
 }
 
 .sp-card:hover {
-  border-color: var(--border-strong);
+  box-shadow:
+    0 1px 3px rgb(15 23 42 / 0.06),
+    0 6px 16px rgb(15 23 42 / 0.04),
+    inset 0 1px 0 color-mix(in srgb, white 40%, transparent);
+}
+
+[data-theme="dark"] .sp-card:hover {
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 0.22),
+    0 6px 16px rgb(0 0 0 / 0.14),
+    inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
 }
 
 .sp-card-active {
-  border: 1.5px solid var(--accent-border);
-  background: linear-gradient(135deg, var(--accent-soft), var(--bg-elevated) 55%);
+  border-color: color-mix(in srgb, var(--accent-border) 35%, transparent);
+  background: linear-gradient(135deg, var(--accent-soft), var(--bg-elevated) 62%);
   box-shadow:
-    inset 4px 0 0 var(--accent),
-    inset 0 1px 0 color-mix(in srgb, white 8%, transparent),
-    var(--shadow-card-active);
+    var(--shadow-card-active),
+    inset 0 1px 0 color-mix(in srgb, white 50%, transparent);
+}
+
+.sp-card-sub {
+  position: relative;
+}
+
+.sp-card-in-use {
+  border-color: color-mix(in srgb, var(--accent-border) 50%, transparent);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent-soft) 140%, transparent),
+    var(--bg-elevated) 58%
+  );
+  box-shadow:
+    var(--shadow-card-active),
+    inset 0 1px 0 color-mix(in srgb, white 55%, transparent);
+}
+
+.sp-card-in-use::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 65%, white));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.sp-card-in-use .sp-progress-fill {
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 55%, white));
+}
+
+.sp-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 90%, var(--bg));
+  box-shadow: inset 0 1px 2px color-mix(in srgb, black 3%, transparent);
+}
+
+.sp-picker-btn {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9px;
+  border: none;
+  background: transparent;
+  padding: 0.45rem 0.55rem;
+  text-align: left;
+  color: var(--text-muted);
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+
+.sp-picker-btn-simple {
+  justify-content: center;
+  padding: 0.4rem 0;
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+.sp-picker-btn:hover:not(:disabled):not(.sp-picker-btn-active) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.sp-picker-btn:disabled:not(.sp-picker-btn-active) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sp-picker-btn-active {
+  background: var(--bg-elevated);
+  color: var(--accent-text);
+  box-shadow: var(--shadow-sm);
+  font-weight: 500;
+}
+
+.sp-picker-icon {
+  display: flex;
+  height: 1.75rem;
+  width: 1.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-muted);
+  transition: background 0.2s, color 0.2s;
+}
+
+.sp-picker-btn-active .sp-picker-icon {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.sp-picker-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sp-picker-label {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.sp-picker-btn-active .sp-picker-label {
+  color: var(--accent-text);
+}
+
+.sp-picker-hint {
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--text-faint);
+}
+
+.sp-picker-btn-active .sp-picker-hint {
+  color: color-mix(in srgb, var(--text-muted) 80%, var(--accent-text));
+}
+
+.sp-picker-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 1px;
 }
 
 .sp-btn-icon {
@@ -200,12 +340,12 @@ body {
 .sp-segment {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 3px;
-  padding: 3px;
+  gap: 4px;
+  padding: 4px;
   border-radius: 12px;
-  border: 1.5px solid var(--border);
-  background: color-mix(in srgb, var(--surface) 80%, var(--bg-elevated));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
+  border: none;
+  background: color-mix(in srgb, var(--surface) 90%, var(--bg));
+  box-shadow: inset 0 1px 2px color-mix(in srgb, black 3%, transparent);
 }
 
 .sp-segment-btn {
@@ -227,7 +367,6 @@ body {
   color: var(--accent-text);
   box-shadow: var(--shadow-sm);
   font-weight: 500;
-  outline: 1.5px solid color-mix(in srgb, var(--accent-border) 55%, transparent);
 }
 
 .sp-toggle {
@@ -280,6 +419,13 @@ body {
   color: var(--accent-text);
 }
 
+.sp-badge-in-use {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: var(--accent-text);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-border) 45%, transparent);
+}
+
 .sp-badge-idle {
   background: var(--surface);
   color: var(--text-faint);
@@ -315,9 +461,32 @@ body {
   justify-content: center;
   border-radius: 8px;
   background: linear-gradient(135deg, var(--accent-soft), var(--surface));
-  border: 1.5px solid var(--accent-border);
+  border: 1px solid color-mix(in srgb, var(--accent-border) 55%, var(--border));
+  box-shadow: var(--shadow-sm);
   color: var(--accent-text);
   overflow: hidden;
+}
+
+.sp-brand-btn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 10px;
+  padding: 2px 4px 2px 2px;
+  transition: background 0.15s ease;
+}
+
+.sp-brand-btn:hover .sp-logo {
+  border-color: color-mix(in srgb, var(--accent-border) 80%, var(--border-strong));
+  box-shadow:
+    var(--shadow-sm),
+    0 0 0 2px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.sp-brand-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
 }
 
 .sp-status-dot {
@@ -354,7 +523,7 @@ body {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  border: 1.5px dashed var(--border-strong);
+  border: 1px dashed var(--border);
   color: var(--text-muted);
 }
 
@@ -434,10 +603,9 @@ html[data-compact="1"] #app {
   background:
     radial-gradient(ellipse 80% 50% at 50% -10%, color-mix(in srgb, var(--accent) 8%, transparent), transparent),
     var(--bg);
-  outline: 1.5px solid var(--border);
-  outline-offset: -1.5px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 80%, transparent);
 }
 
 .app-header {
-  border-bottom: 1.5px solid var(--border);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 90%, transparent);
 }

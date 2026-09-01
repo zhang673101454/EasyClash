@@ -139,6 +139,12 @@ export const useProxyStore = defineStore('proxy', () => {
     modalMessage.value = ''
   }
 
+  function goHome() {
+    showSettings.value = false
+    showAddForm.value = false
+    tab.value = 'home'
+  }
+
   async function requireService(detail?: string) {
     if (compact.value) {
       await setCompact(false)
@@ -149,8 +155,7 @@ export const useProxyStore = defineStore('proxy', () => {
     } catch {
       /* ignore */
     }
-    showSettings.value = false
-    tab.value = 'home'
+    goHome()
     modalTitle.value = '后端服务未启动'
     modalMessage.value = detail?.trim() || '请先到「连接」页点击一个订阅开始使用。'
   }
@@ -554,6 +559,7 @@ export const useProxyStore = defineStore('proxy', () => {
     showToast,
     dismissModal,
     requireService,
+    goHome,
     refresh,
     refreshNodes,
     refreshSubscriptionTraffic,

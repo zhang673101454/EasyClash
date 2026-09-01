@@ -19,7 +19,7 @@ export function getTheme(): Theme {
   } catch {
     /* ignore */
   }
-  return 'dark'
+  return 'light'
 }
 
 function syncWindowBackground(_theme: Theme) {
