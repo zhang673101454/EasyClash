@@ -111,7 +111,7 @@ SectionEnd
 Section "uninstall"
     !insertmacro wails.setShellContext
 
-    # 先结束进程，并仅在系统代理指向本机 7890 时关闭，避免残留
+    # Stop leftover processes and disable EasyClash system proxy if still set
     ExecWait 'taskkill /F /IM ${PRODUCT_EXECUTABLE} /T'
     ExecWait 'taskkill /F /IM mihomo.exe /T'
     ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" "ProxyServer"
