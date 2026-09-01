@@ -491,6 +491,12 @@ func (a *App) runWarmup(ctx context.Context) {
 	}
 
 	a.autoSelectOnce(ctx, true, false)
+
+	sel, err := a.client.CurrentNode(ctx)
+	if err == nil && (sel.Name == "" || sel.Name == "DIRECT") {
+		slog.Warn("当前仍为 DIRECT，再次尝试自动选节点")
+		a.autoSelectOnce(ctx, true, false)
+	}
 }
 
 func (a *App) decorateStatus(status ProxyStatus) ProxyStatus {
@@ -763,8 +769,8 @@ func connectedStatus(name string, latency int) ProxyStatus {
 	if name == "" || name == "DIRECT" {
 		return ProxyStatus{
 			Connected: true,
-			NodeName:  "DIRECT",
-			Message:   "已连接 - 直连",
+			NodeName:  "",
+			Message:   "已连接 - 规则模式",
 		}
 	}
 	if latency > 0 {

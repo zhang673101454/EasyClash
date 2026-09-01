@@ -46,7 +46,7 @@ function onToggleTheme() {
           />
         </div>
         <p class="truncate text-[10px] text-[var(--text-faint)]">
-          {{ store.connected ? (store.nodeName || '已连接') : '未连接' }}
+          {{ store.headerSubtitle }}
         </p>
       </div>
     </button>

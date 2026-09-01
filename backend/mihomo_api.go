@@ -182,6 +182,13 @@ func (c *MihomoClient) AutoSelectBestIfBetter(ctx context.Context, minImprovemen
 		return NodeSelection{Name: current.Name, Latency: bestDelay}, false, nil
 	}
 
+	if current.Name == "" || current.Name == "DIRECT" {
+		if err := c.SwitchProxy(ctx, preferredGroup, bestNode); err != nil {
+			return NodeSelection{}, false, err
+		}
+		return NodeSelection{Name: bestNode, Latency: bestDelay}, true, nil
+	}
+
 	currentDelay := delays[current.Name]
 	if currentDelay <= 0 {
 		currentDelay = current.Latency

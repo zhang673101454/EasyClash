@@ -88,10 +88,24 @@ export const useProxyStore = defineStore('proxy', () => {
     if (!connected.value) {
       return '未连接'
     }
-    if (nodeName.value && latencyMs.value > 0) {
+    if (nodeName.value && nodeName.value !== 'DIRECT' && latencyMs.value > 0) {
       return `已连接 · ${nodeName.value} (${latencyMs.value}ms)`
     }
     return message.value || '已连接'
+  })
+
+  const headerSubtitle = computed(() => {
+    if (!connected.value) {
+      return '未连接'
+    }
+    const node = nodeName.value.trim()
+    if (!node || node === 'DIRECT') {
+      return '等待节点'
+    }
+    if (latencyMs.value > 0) {
+      return `${node} (${latencyMs.value}ms)`
+    }
+    return node
   })
 
   const visibleNodes = computed(() => {
@@ -554,6 +568,7 @@ export const useProxyStore = defineStore('proxy', () => {
     downRate,
     visibleNodes,
     hiddenNodeCount,
+    headerSubtitle,
     statusLabel,
     applyStatus,
     showToast,
