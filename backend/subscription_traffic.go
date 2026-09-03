@@ -92,7 +92,10 @@ func GetSubscriptionTrafficCache(configDir, id string) (SubscriptionTraffic, boo
 }
 
 // RefreshSubscriptionTraffic 拉取订阅 URL：更新流量缓存，并保存节点内容到本地（可走当前已开启的代理）。
-func RefreshSubscriptionTraffic(configDir, id string) (SubscriptionRefreshResult, error) {
+func RefreshSubscriptionTraffic(ctx context.Context, configDir, id string) (SubscriptionRefreshResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	items, err := ListSubscriptions(configDir)
 	if err != nil {
 		return SubscriptionRefreshResult{}, err
@@ -108,8 +111,6 @@ func RefreshSubscriptionTraffic(configDir, id string) (SubscriptionRefreshResult
 		return SubscriptionRefreshResult{}, fmt.Errorf("找不到该订阅")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	defer cancel()
 	body, traffic, hasTraffic, err := fetchSubscription(ctx, rawURL)
 	if err != nil {
 		return SubscriptionRefreshResult{}, err
@@ -153,7 +154,9 @@ func RefreshAllSubscriptionTraffic(configDir string) (map[string]SubscriptionTra
 		cache = map[string]SubscriptionTraffic{}
 	}
 	for _, item := range items {
-		refreshed, refreshErr := RefreshSubscriptionTraffic(configDir, item.ID)
+		itemCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		refreshed, refreshErr := RefreshSubscriptionTraffic(itemCtx, configDir, item.ID)
+		cancel()
 		if refreshErr != nil {
 			slog.Debug("刷新订阅失败", "id", item.ID, "error", refreshErr)
 			continue
@@ -185,6 +188,9 @@ func fetchSubscription(ctx context.Context, rawURL string) ([]byte, Subscription
 		}
 		for _, ua := range subscriptionTrafficUserAgents {
 			for _, client := range clients {
+				if err := ctx.Err(); err != nil {
+					return nil, SubscriptionTraffic{}, false, err
+				}
 				body, traffic, hasTraffic, err := fetchSubscriptionOnce(ctx, client, rawURL, ua)
 				if err == nil {
 					return body, traffic, hasTraffic, nil

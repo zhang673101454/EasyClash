@@ -58,14 +58,21 @@ async function saveEdit(event: Event, id: string) {
 
 async function refreshTraffic(event: Event, id: string) {
   event.stopPropagation()
-  if (refreshingId.value) {
+  if (refreshingId.value === id) {
+    await store.cancelRefreshSubscriptionTraffic(id)
+    refreshingId.value = ''
     return
+  }
+  if (refreshingId.value) {
+    await store.cancelRefreshSubscriptionTraffic(refreshingId.value)
   }
   refreshingId.value = id
   try {
     await store.refreshSubscriptionTraffic(id)
   } finally {
-    refreshingId.value = ''
+    if (refreshingId.value === id) {
+      refreshingId.value = ''
+    }
   }
 }
 </script>
@@ -164,9 +171,8 @@ async function refreshTraffic(event: Event, id: string) {
           <button
             class="sp-btn-icon"
             type="button"
-            aria-label="刷新流量与节点"
-            title="刷新流量与节点（需先开启代理）"
-            :disabled="refreshingId === item.id"
+            :aria-label="refreshingId === item.id ? '取消刷新' : '刷新流量与节点'"
+            :title="refreshingId === item.id ? '取消刷新' : '刷新流量与节点（需先开启代理）'"
             @click="refreshTraffic($event, item.id)"
           >
             <svg

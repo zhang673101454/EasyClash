@@ -656,6 +656,14 @@ func (c *MihomoClient) WaitForProxyNodes(ctx context.Context) error {
 	}
 }
 
+// ReloadConfigFromDisk 让 mihomo 重新加载配置目录中的 config.yaml。
+func (c *MihomoClient) ReloadConfigFromDisk(ctx context.Context) error {
+	if err := c.doJSON(ctx, http.MethodPut, "/configs?force=true", nil, nil); err != nil {
+		return fmt.Errorf("重载 mihomo 配置失败: %w", err)
+	}
+	return nil
+}
+
 // PatchMode 热更新 mihomo 的 rule/global 模式。
 func (c *MihomoClient) PatchMode(ctx context.Context, mode string) error {
 	body, err := json.Marshal(map[string]string{"mode": mode})

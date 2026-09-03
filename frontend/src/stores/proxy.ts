@@ -9,6 +9,7 @@ import {
   GetStatus,
   GetSubscriptions,
   GetTraffic,
+  CancelRefreshSubscriptionTraffic,
   RefreshSubscriptionTraffic,
   RemoveSubscription,
   SelectNode,
@@ -251,9 +252,18 @@ export const useProxyStore = defineStore('proxy', () => {
     }
   }
 
+  async function cancelRefreshSubscriptionTraffic(id: string) {
+    try {
+      await CancelRefreshSubscriptionTraffic(id)
+    } catch {
+      // ignore cancel errors
+    }
+  }
+
   async function refreshAllSubscriptionTraffic() {
-    const ids = subscriptions.value.map((sub) => sub.id)
-    await Promise.all(ids.map((id) => refreshSubscriptionTraffic(id, true)))
+    for (const sub of subscriptions.value) {
+      await refreshSubscriptionTraffic(sub.id, true)
+    }
   }
 
   async function refreshSubscriptionsRetrying() {
@@ -590,6 +600,7 @@ export const useProxyStore = defineStore('proxy', () => {
     refresh,
     refreshNodes,
     refreshSubscriptionTraffic,
+    cancelRefreshSubscriptionTraffic,
     refreshAllSubscriptionTraffic,
     addSubscription,
     onAddClick,

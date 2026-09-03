@@ -144,6 +144,7 @@ func UpdateSubscription(configDir, id, rawURL, remark string, requireURL bool) (
 		if err := validateSubscribeURL(nextURL); err != nil {
 			return nil, err
 		}
+		urlChanged := !sameSubscribeURL(items[i].URL, nextURL)
 		for j := range items {
 			if j == i {
 				continue
@@ -154,6 +155,10 @@ func UpdateSubscription(configDir, id, rawURL, remark string, requireURL bool) (
 		}
 		items[i].URL = nextURL
 		items[i].Remark = strings.TrimSpace(remark)
+		if urlChanged {
+			_ = os.Remove(providerSourcePath(configDir, id))
+			_ = os.Remove(filepath.Join(configDir, "providers", id+".yaml"))
+		}
 		break
 	}
 	if !found {
@@ -244,6 +249,32 @@ func persistSubscriptions(configDir string, items []Subscription) error {
 	return nil
 }
 
+// SyncSubscriptionRoutingRules 将 subscriptions.json 中的订阅域名写入路由规则。
+func SyncSubscriptionRoutingRules(configDir string) (bool, error) {
+	items, err := ListSubscriptions(configDir)
+	if err != nil {
+		return false, err
+	}
+	cfg, err := loadConfigMap(configDir)
+	if err != nil {
+		return false, err
+	}
+	newRules := BuildRoutingRules(items)
+	if rulesEqual(cfg["rules"], newRules) {
+		return false, nil
+	}
+	cfg["rules"] = newRules
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return false, fmt.Errorf("编码路由规则失败: %w", err)
+	}
+	path := filepath.Join(configDir, configFileName)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return false, fmt.Errorf("写入路由规则失败: %w", err)
+	}
+	return true, nil
+}
+
 func syncProvidersToConfig(configDir string, items []Subscription) error {
 	cfg, err := loadConfigMap(configDir)
 	if err != nil {
@@ -269,7 +300,8 @@ func syncProvidersToConfig(configDir string, items []Subscription) error {
 	if err := ensureProxyGroupUses(cfg, enabledIDs); err != nil {
 		return err
 	}
-	normalizeRuntimeConfig(cfg)
+	cfg["rules"] = BuildRoutingRules(items)
+	normalizeRuntimeConfig(cfg, items)
 	cleanupProviderFiles(configDir, keep)
 
 	data, err := yaml.Marshal(cfg)
@@ -556,7 +588,8 @@ func normalizeConfigFile(configDir string) error {
 	if err != nil {
 		return err
 	}
-	changed := normalizeRuntimeConfig(cfg)
+	items, _ := ListSubscriptions(configDir)
+	changed := normalizeRuntimeConfig(cfg, items)
 	if !changed {
 		return nil
 	}
@@ -572,16 +605,17 @@ func normalizeConfigFile(configDir string) error {
 	return nil
 }
 
-func normalizeRuntimeConfig(cfg map[string]any) bool {
+func normalizeRuntimeConfig(cfg map[string]any, items []Subscription) bool {
 	changed := false
 	delete(cfg, "geox-url")
 
-	providers, _ := cfg["proxy-providers"].(map[string]any)
-	safeRules := BuildRoutingRules(providers)
-	if !rulesEqual(cfg["rules"], safeRules) {
-		cfg["rules"] = safeRules
+	newRules := BuildRoutingRules(items)
+	if !rulesEqual(cfg["rules"], newRules) {
+		cfg["rules"] = newRules
 		changed = true
 	}
+
+	providers, _ := cfg["proxy-providers"].(map[string]any)
 
 	if cfg["geodata-mode"] != true {
 		cfg["geodata-mode"] = true

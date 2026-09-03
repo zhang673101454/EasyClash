@@ -31,6 +31,10 @@ type App struct {
 	warmupCancel      context.CancelFunc
 	autoSelectMu      sync.Mutex
 	autoSelectCancel  context.CancelFunc
+	reloadMu          sync.Mutex
+	refreshMu         sync.Mutex
+	refreshCancels    map[string]context.CancelFunc
+	refreshGeneration map[string]uint64
 }
 
 // NewApp 创建应用实例。
@@ -52,6 +56,9 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.manager = manager
 	manager.SetExitHandler(a.onMihomoUnexpectedExit)
+	if _, err := backend.SyncSubscriptionRoutingRules(manager.ConfigDir()); err != nil {
+		slog.Warn("启动时同步订阅路由规则失败", "error", err)
+	}
 	// 异常退出可能留下指向 7890 的系统代理；启动时尚未连接，仅在仍是本软件代理时清理。
 	if err := backend.DisableSystemProxyIfOurs(); err != nil {
 		slog.Warn("启动时清理残留系统代理失败", "error", err)
@@ -344,22 +351,33 @@ func (a *App) reloadLocked() error {
 	if err := backend.ApplySettingsToConfig(a.manager.ConfigDir(), settings); err != nil {
 		slog.Warn("重载前写入运行设置失败", "error", err)
 	}
-	// 停核前先关系统代理，避免 Stop→Start 窗口期浏览器仍指向已死的 7890。
+	tunMode := settings.Tun
+	manager := a.manager
+	a.mu.Unlock()
+	err := a.stopStartProxy(manager, tunMode)
+	a.mu.Lock()
+	return err
+}
+
+func (a *App) stopStartProxy(manager *backend.ProxyManager, tunMode bool) error {
+	a.reloadMu.Lock()
+	defer a.reloadMu.Unlock()
+
 	if err := backend.SetSystemProxy(false); err != nil {
 		slog.Warn("重载前关闭系统代理失败", "error", err)
 		_ = backend.ForceDisableEasyClashProxy()
 	}
-	if err := a.manager.Stop(); err != nil {
+	if err := manager.Stop(); err != nil {
 		_ = backend.SetSystemProxy(false)
 		_ = backend.ForceDisableEasyClashProxy()
 		return fmt.Errorf("停止内核失败: %w", err)
 	}
-	if err := a.manager.Start(a.ctx); err != nil {
+	if err := manager.Start(a.ctx); err != nil {
 		_ = backend.SetSystemProxy(false)
 		_ = backend.ForceDisableEasyClashProxy()
 		return fmt.Errorf("重新启动失败: %w", err)
 	}
-	if settings.Tun {
+	if tunMode {
 		if err := backend.SetSystemProxy(false); err != nil {
 			slog.Warn("TUN 模式下关闭系统代理失败", "error", err)
 			_ = backend.ForceDisableEasyClashProxy()
@@ -367,7 +385,7 @@ func (a *App) reloadLocked() error {
 	} else if err := backend.SetSystemProxy(true); err != nil {
 		_ = backend.SetSystemProxy(false)
 		_ = backend.ForceDisableEasyClashProxy()
-		_ = a.manager.Stop()
+		_ = manager.Stop()
 		return fmt.Errorf("重载后开启系统代理失败: %w", err)
 	}
 	return nil
@@ -609,43 +627,150 @@ func (a *App) GetSubscriptions() ([]SubscriptionItem, error) {
 
 // RefreshSubscriptionTraffic 刷新指定订阅的流量与节点缓存（可走当前已开启的代理）。
 func (a *App) RefreshSubscriptionTraffic(id string) (SubscriptionItem, error) {
+	ctx, endRefresh := a.beginSubscriptionRefresh(id)
+	defer endRefresh()
+
 	dir, err := a.configDir()
 	if err != nil {
 		return SubscriptionItem{}, err
 	}
-	result, err := backend.RefreshSubscriptionTraffic(dir, id)
+	a.prepareSubscriptionRefreshRouting(dir)
+	result, err := backend.RefreshSubscriptionTraffic(ctx, dir, id)
 	if err != nil {
+		if ctx.Err() != nil {
+			return SubscriptionItem{}, fmt.Errorf("已取消刷新")
+		}
 		return SubscriptionItem{}, err
 	}
 
+	var applyLater bool
 	a.mu.Lock()
-	shouldReload := result.NodesSaved && a.manager != nil && a.manager.Running()
-	if shouldReload {
+	if result.NodesSaved && a.manager != nil && a.manager.Running() {
 		items, listErr := backend.ListSubscriptions(dir)
-		if listErr != nil {
-			shouldReload = false
-		} else {
-			shouldReload = false
+		if listErr == nil {
 			for _, item := range items {
 				if item.ID == id && item.Enabled {
-					shouldReload = true
+					applyLater = true
 					break
 				}
 			}
 		}
 	}
 	a.mu.Unlock()
-	if shouldReload {
-		a.mu.Lock()
-		reloadErr := a.reloadLocked()
-		a.mu.Unlock()
-		if reloadErr != nil {
-			slog.Warn("刷新订阅后重载代理失败", "id", id, "error", reloadErr)
-		} else {
+	if applyLater {
+		go a.applyRefreshToRunningProxy(id)
+	}
+
+	return a.subscriptionItemByID(dir, id, result.Traffic)
+}
+
+// CancelRefreshSubscriptionTraffic 取消指定订阅的刷新。
+func (a *App) CancelRefreshSubscriptionTraffic(id string) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return
+	}
+	a.refreshMu.Lock()
+	defer a.refreshMu.Unlock()
+	if a.refreshCancels == nil {
+		return
+	}
+	if cancel, ok := a.refreshCancels[id]; ok {
+		cancel()
+	}
+}
+
+func (a *App) beginSubscriptionRefresh(id string) (context.Context, func()) {
+	a.refreshMu.Lock()
+	if a.refreshCancels == nil {
+		a.refreshCancels = map[string]context.CancelFunc{}
+	}
+	if a.refreshGeneration == nil {
+		a.refreshGeneration = map[string]uint64{}
+	}
+	if old, ok := a.refreshCancels[id]; ok {
+		old()
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 25*time.Second)
+	a.refreshGeneration[id]++
+	gen := a.refreshGeneration[id]
+	a.refreshCancels[id] = cancel
+	a.refreshMu.Unlock()
+
+	cleanup := func() {
+		a.refreshMu.Lock()
+		if a.refreshGeneration[id] == gen {
+			delete(a.refreshCancels, id)
+		}
+		a.refreshMu.Unlock()
+	}
+	return ctx, cleanup
+}
+
+func (a *App) prepareSubscriptionRefreshRouting(configDir string) {
+	changed, err := backend.SyncSubscriptionRoutingRules(configDir)
+	if err != nil {
+		slog.Warn("同步订阅路由规则失败", "error", err)
+		return
+	}
+	a.mu.Lock()
+	running := a.manager != nil && a.manager.Running()
+	a.mu.Unlock()
+	if !running {
+		return
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 8*time.Second)
+	defer cancel()
+	if err := a.client.ReloadConfigFromDisk(ctx); err != nil {
+		slog.Warn("热重载路由规则失败", "error", err)
+		return
+	}
+	if changed {
+		slog.Debug("已热重载订阅路由规则")
+	}
+}
+
+func (a *App) applyRefreshToRunningProxy(id string) {
+	ctx, cancel := context.WithTimeout(a.ctx, 20*time.Second)
+	defer cancel()
+
+	if err := a.client.UpdateNamedProviders(ctx, []string{id}); err == nil {
+		if count, countErr := a.client.CountProviderProxies(ctx, id); countErr == nil && count > 0 {
 			a.startWarmup()
+			return
 		}
 	}
 
+	a.mu.Lock()
+	needReload := a.manager != nil && a.manager.Running()
+	a.mu.Unlock()
+	if !needReload {
+		return
+	}
+	if err := a.performReload(); err != nil {
+		slog.Warn("刷新订阅后重载代理失败", "id", id, "error", err)
+		return
+	}
+	a.startWarmup()
+}
+
+func (a *App) performReload() error {
+	a.mu.Lock()
+	if a.manager == nil || !a.manager.Running() {
+		a.mu.Unlock()
+		return nil
+	}
+	settings := backend.LoadSettings(a.manager.ConfigDir())
+	if err := backend.ApplySettingsToConfig(a.manager.ConfigDir(), settings); err != nil {
+		slog.Warn("重载前写入运行设置失败", "error", err)
+	}
+	tunMode := settings.Tun
+	manager := a.manager
+	a.mu.Unlock()
+	return a.stopStartProxy(manager, tunMode)
+}
+
+func (a *App) subscriptionItemByID(dir, id string, traffic backend.SubscriptionTraffic) (SubscriptionItem, error) {
 	items, err := backend.ListSubscriptions(dir)
 	if err != nil {
 		return SubscriptionItem{}, err
@@ -654,7 +779,6 @@ func (a *App) RefreshSubscriptionTraffic(id string) (SubscriptionItem, error) {
 		if item.ID != id {
 			continue
 		}
-		traffic := result.Traffic
 		if traffic.UpdatedAt == 0 {
 			if cached, ok := backend.GetSubscriptionTrafficCache(dir, id); ok {
 				traffic = cached
@@ -690,7 +814,9 @@ func (a *App) AddSubscription(rawURL string, remark string) ([]SubscriptionItem,
 	for _, item := range items {
 		if backend.SameSubscribeURL(item.URL, rawURL) {
 			go func(id string) {
-				if _, fetchErr := backend.RefreshSubscriptionTraffic(configDir, id); fetchErr != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+				defer cancel()
+				if _, fetchErr := backend.RefreshSubscriptionTraffic(ctx, configDir, id); fetchErr != nil {
 					slog.Debug("新订阅流量获取失败", "id", id, "error", fetchErr)
 				}
 			}(item.ID)
@@ -737,7 +863,9 @@ func (a *App) UpdateSubscription(id string, rawURL string, remark string) ([]Sub
 			return []SubscriptionItem{}, fmt.Errorf("订阅已保存，但重载代理失败: %w", err)
 		}
 		go func(subID string) {
-			if _, fetchErr := backend.RefreshSubscriptionTraffic(configDir, subID); fetchErr != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			if _, fetchErr := backend.RefreshSubscriptionTraffic(ctx, configDir, subID); fetchErr != nil {
 				slog.Debug("更新订阅后刷新流量失败", "id", subID, "error", fetchErr)
 			}
 		}(id)
@@ -832,8 +960,12 @@ func (a *App) UseSubscription(id string) (ProxyStatus, error) {
 	a.mu.Unlock()
 
 	if needsBootstrap {
-		if _, err := backend.RefreshSubscriptionTraffic(configDir, id); err != nil {
-			slog.Debug("切换前静默拉取订阅失败", "id", id, "error", err)
+		a.prepareSubscriptionRefreshRouting(configDir)
+		ctx, cancel := context.WithTimeout(a.ctx, 25*time.Second)
+		_, err := backend.RefreshSubscriptionTraffic(ctx, configDir, id)
+		cancel()
+		if err != nil {
+			return ProxyStatus{}, fmt.Errorf("该订阅尚无节点缓存，拉取失败：%w。请先用其它订阅开代理，再点「刷新流量与节点」", err)
 		}
 	}
 

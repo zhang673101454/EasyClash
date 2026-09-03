@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like
@@ -86,6 +86,23 @@ ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
    !insertmacro wails.checkArchitecture
+   Call CheckRunningEasyClash
+FunctionEnd
+
+Function CheckRunningEasyClash
+   ClearErrors
+   ExecWait 'cmd /c tasklist /FI "IMAGENAME eq ${PRODUCT_EXECUTABLE}" /NH | find /I "${PRODUCT_EXECUTABLE}"' $0
+   IntCmp $0 0 running notrunning notrunning
+ running:
+   MessageBox MB_YESNO|MB_ICONQUESTION "检测到 ${INFO_PRODUCTNAME} 正在运行。$\n$\n是否关闭程序并继续安装？$\n选「否」将取消安装。" IDYES kill IDNO abort
+ kill:
+   ExecWait 'taskkill /F /IM ${PRODUCT_EXECUTABLE} /T'
+   ExecWait 'taskkill /F /IM mihomo.exe /T'
+   Sleep 800
+   Goto notrunning
+ abort:
+   Quit
+ notrunning:
 FunctionEnd
 
 Section

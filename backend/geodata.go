@@ -22,17 +22,41 @@ func SmartRoutingRules() []any {
 	return BuildRoutingRules(nil)
 }
 
-// BuildRoutingRules 生成路由规则；providers 中的订阅域名会插入 DIRECT，避免无节点时拉取订阅走 PROXY 死循环。
-func BuildRoutingRules(providers map[string]any) []any {
+// BuildRoutingRules 生成路由规则。
+// 已启用订阅域名 → DIRECT（避免 mihomo 拉取自身订阅走 PROXY 死循环）；
+// 未启用订阅域名 → PROXY（经 mixed-port 刷新时走当前代理，避免被 GEOSITE,cn 直连）。
+func BuildRoutingRules(items []Subscription) []any {
 	rules := []any{
 		"IP-CIDR,127.0.0.0/8,DIRECT",
 		"IP-CIDR,10.0.0.0/8,DIRECT",
 		"IP-CIDR,172.16.0.0/12,DIRECT",
 		"IP-CIDR,192.168.0.0/16,DIRECT",
 	}
-	for _, host := range subscriptionProviderHosts(providers) {
-		rules = append(rules, "DOMAIN-SUFFIX,"+host+",DIRECT")
+
+	directHosts := map[string]struct{}{}
+	proxyHosts := make([]string, 0, len(items))
+	for _, item := range items {
+		host := subscriptionHostFromURL(item.URL)
+		if host == "" {
+			continue
+		}
+		if item.Enabled {
+			if _, exists := directHosts[host]; !exists {
+				directHosts[host] = struct{}{}
+				rules = append(rules, "DOMAIN-SUFFIX,"+host+",DIRECT")
+			}
+			continue
+		}
+		if _, exists := directHosts[host]; exists {
+			continue
+		}
+		proxyHosts = append(proxyHosts, host)
 	}
+	sort.Strings(proxyHosts)
+	for _, host := range uniqueSortedStrings(proxyHosts) {
+		rules = append(rules, "DOMAIN-SUFFIX,"+host+",PROXY")
+	}
+
 	rules = append(rules,
 		"GEOSITE,cn,DIRECT",
 		"GEOIP,CN,DIRECT",
@@ -41,30 +65,24 @@ func BuildRoutingRules(providers map[string]any) []any {
 	return rules
 }
 
-func subscriptionProviderHosts(providers map[string]any) []string {
-	if len(providers) == 0 {
+func uniqueSortedStrings(values []string) []string {
+	if len(values) == 0 {
 		return nil
 	}
 	seen := map[string]struct{}{}
-	hosts := make([]string, 0, len(providers))
-	for _, value := range providers {
-		provider, ok := value.(map[string]any)
-		if !ok {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
 			continue
 		}
-		rawURL, _ := provider["url"].(string)
-		host := subscriptionHostFromURL(rawURL)
-		if host == "" {
+		if _, exists := seen[value]; exists {
 			continue
 		}
-		if _, exists := seen[host]; exists {
-			continue
-		}
-		seen[host] = struct{}{}
-		hosts = append(hosts, host)
+		seen[value] = struct{}{}
+		out = append(out, value)
 	}
-	sort.Strings(hosts)
-	return hosts
+	sort.Strings(out)
+	return out
 }
 
 func subscriptionHostFromURL(rawURL string) string {

@@ -7,6 +7,8 @@ export function AddSubscription(arg1:string,arg2:string):Promise<Array<main.Subs
 
 export function AutoSelectBestNode():Promise<main.ProxyStatus>;
 
+export function CancelRefreshSubscriptionTraffic(arg1:string):Promise<void>;
+
 export function GetAutoStart():Promise<boolean>;
 
 export function GetNodes():Promise<Array<backend.ProxyNode>>;
