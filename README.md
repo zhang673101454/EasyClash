@@ -81,18 +81,6 @@ Go + Wails v2 + Vue 3 + Pinia + TailwindCSS，底层 [mihomo](https://github.com
 
 ---
 
-## 打赏
-
-如果 EasyClash 对你有帮助，欢迎请我喝杯咖啡 ☕
-
-<p align="center">
-  <img src="docs/screenshots/donate-alipay.jpg" alt="支付宝打赏" width="280">
-</p>
-
-<p align="center">支付宝扫码 · feier(*豪)</p>
-
----
-
 ## 开发与打包
 
 <details>
@@ -157,3 +145,14 @@ powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1 -Nsis
 
 **Q: 已连接但上不了网？**  
 检查节点是否有效（避免选用占位节点 `127.0.0.1`）；尝试刷新订阅或换节点；查看 `%APPDATA%\EasyClash\mihomo.log`。
+
+---
+
+<details>
+<summary>如果这个工具有帮到你</summary>
+
+纯属自愿，不必勉强。支付宝扫码即可：
+
+<img src="docs/screenshots/donate-alipay.jpg" alt="支付宝" width="160">
+
+</details>
