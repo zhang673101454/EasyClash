@@ -34,6 +34,12 @@ type SubscriptionTraffic struct {
 	UpdatedAt int64 `json:"updatedAt"`
 }
 
+// SubscriptionRefreshResult 刷新订阅 URL 的结果。
+type SubscriptionRefreshResult struct {
+	Traffic    SubscriptionTraffic
+	NodesSaved bool
+}
+
 func subscriptionTrafficPath(configDir string) string {
 	return filepath.Join(configDir, subscriptionTrafficFileName)
 }
@@ -85,11 +91,11 @@ func GetSubscriptionTrafficCache(configDir, id string) (SubscriptionTraffic, boo
 	return traffic, ok
 }
 
-// RefreshSubscriptionTraffic 拉取订阅 URL 并更新流量缓存。
-func RefreshSubscriptionTraffic(configDir, id string) (SubscriptionTraffic, error) {
+// RefreshSubscriptionTraffic 拉取订阅 URL：更新流量缓存，并保存节点内容到本地（可走当前已开启的代理）。
+func RefreshSubscriptionTraffic(configDir, id string) (SubscriptionRefreshResult, error) {
 	items, err := ListSubscriptions(configDir)
 	if err != nil {
-		return SubscriptionTraffic{}, err
+		return SubscriptionRefreshResult{}, err
 	}
 	var rawURL string
 	for _, item := range items {
@@ -99,28 +105,44 @@ func RefreshSubscriptionTraffic(configDir, id string) (SubscriptionTraffic, erro
 		}
 	}
 	if rawURL == "" {
-		return SubscriptionTraffic{}, fmt.Errorf("找不到该订阅")
+		return SubscriptionRefreshResult{}, fmt.Errorf("找不到该订阅")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	traffic, err := fetchSubscriptionUserinfo(ctx, rawURL)
+	body, traffic, hasTraffic, err := fetchSubscription(ctx, rawURL)
 	if err != nil {
-		return SubscriptionTraffic{}, err
+		return SubscriptionRefreshResult{}, err
+	}
+	if err := SaveProviderSource(configDir, id, body); err != nil {
+		return SubscriptionRefreshResult{}, err
+	}
+	if err := syncProvidersToConfig(configDir, items); err != nil {
+		return SubscriptionRefreshResult{}, fmt.Errorf("更新订阅配置失败: %w", err)
 	}
 
-	cache, err := loadSubscriptionTrafficCache(configDir)
-	if err != nil {
-		cache = map[string]SubscriptionTraffic{}
+	result := SubscriptionRefreshResult{NodesSaved: true}
+	if hasTraffic {
+		cache, cacheErr := loadSubscriptionTrafficCache(configDir)
+		if cacheErr != nil {
+			cache = map[string]SubscriptionTraffic{}
+		}
+		cache[id] = traffic
+		if err := saveSubscriptionTrafficCache(configDir, cache); err != nil {
+			slog.Warn("保存订阅流量缓存失败", "id", id, "error", err)
+		}
+		result.Traffic = traffic
+	} else {
+		slog.Debug("订阅未返回流量头，已保存节点", "id", id)
+		if cached, ok := GetSubscriptionTrafficCache(configDir, id); ok {
+			result.Traffic = cached
+		}
 	}
-	cache[id] = traffic
-	if err := saveSubscriptionTrafficCache(configDir, cache); err != nil {
-		slog.Warn("保存订阅流量缓存失败", "id", id, "error", err)
-	}
-	return traffic, nil
+	slog.Info("已刷新订阅", "id", id, "bytes", len(body), "traffic", hasTraffic)
+	return result, nil
 }
 
-// RefreshAllSubscriptionTraffic 刷新全部订阅的流量信息。
+// RefreshAllSubscriptionTraffic 刷新全部订阅的流量与节点缓存。
 func RefreshAllSubscriptionTraffic(configDir string) (map[string]SubscriptionTraffic, error) {
 	items, err := ListSubscriptions(configDir)
 	if err != nil {
@@ -131,14 +153,14 @@ func RefreshAllSubscriptionTraffic(configDir string) (map[string]SubscriptionTra
 		cache = map[string]SubscriptionTraffic{}
 	}
 	for _, item := range items {
-		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-		traffic, fetchErr := fetchSubscriptionUserinfo(ctx, item.URL)
-		cancel()
-		if fetchErr != nil {
-			slog.Debug("获取订阅流量失败", "id", item.ID, "error", fetchErr)
+		refreshed, refreshErr := RefreshSubscriptionTraffic(configDir, item.ID)
+		if refreshErr != nil {
+			slog.Debug("刷新订阅失败", "id", item.ID, "error", refreshErr)
 			continue
 		}
-		cache[item.ID] = traffic
+		if refreshed.Traffic.UpdatedAt > 0 {
+			cache[item.ID] = refreshed.Traffic
+		}
 	}
 	if err := saveSubscriptionTrafficCache(configDir, cache); err != nil {
 		return cache, err
@@ -146,25 +168,38 @@ func RefreshAllSubscriptionTraffic(configDir string) (map[string]SubscriptionTra
 	return cache, nil
 }
 
-func fetchSubscriptionUserinfo(ctx context.Context, rawURL string) (SubscriptionTraffic, error) {
+func fetchSubscription(ctx context.Context, rawURL string) ([]byte, SubscriptionTraffic, bool, error) {
 	clients := subscriptionTrafficClients()
+	attempts := 1
+	if localMixedProxyAvailable() {
+		attempts = 3
+	}
 	var lastErr error
-	for _, ua := range subscriptionTrafficUserAgents {
-		for _, client := range clients {
-			traffic, err := fetchSubscriptionUserinfoOnce(ctx, client, rawURL, ua)
-			if err == nil {
-				return traffic, nil
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, SubscriptionTraffic{}, false, ctx.Err()
+			case <-time.After(2 * time.Second):
 			}
-			lastErr = err
+		}
+		for _, ua := range subscriptionTrafficUserAgents {
+			for _, client := range clients {
+				body, traffic, hasTraffic, err := fetchSubscriptionOnce(ctx, client, rawURL, ua)
+				if err == nil {
+					return body, traffic, hasTraffic, nil
+				}
+				lastErr = err
+			}
 		}
 	}
 	if lastErr == nil {
-		lastErr = fmt.Errorf("该订阅未返回流量信息")
+		lastErr = fmt.Errorf("请求订阅失败")
 	}
 	if !localMixedProxyAvailable() && strings.Contains(lastErr.Error(), "请求订阅失败") {
-		return SubscriptionTraffic{}, fmt.Errorf("%w（可先点击订阅开启代理后再刷新流量）", lastErr)
+		return nil, SubscriptionTraffic{}, false, fmt.Errorf("%w（请先启用可用订阅并开启代理后再刷新）", lastErr)
 	}
-	return SubscriptionTraffic{}, lastErr
+	return nil, SubscriptionTraffic{}, false, lastErr
 }
 
 func subscriptionTrafficClients() []*http.Client {
@@ -198,29 +233,35 @@ func localMixedProxyAvailable() bool {
 	return true
 }
 
-func fetchSubscriptionUserinfoOnce(ctx context.Context, client *http.Client, rawURL, userAgent string) (SubscriptionTraffic, error) {
+func fetchSubscriptionOnce(ctx context.Context, client *http.Client, rawURL, userAgent string) ([]byte, SubscriptionTraffic, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return SubscriptionTraffic{}, err
+		return nil, SubscriptionTraffic{}, false, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return SubscriptionTraffic{}, fmt.Errorf("请求订阅失败: %w", err)
+		return nil, SubscriptionTraffic{}, false, fmt.Errorf("请求订阅失败: %w", err)
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<20))
 
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return nil, SubscriptionTraffic{}, false, fmt.Errorf("读取订阅内容失败: %w", err)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return SubscriptionTraffic{}, fmt.Errorf("订阅返回 HTTP %d", resp.StatusCode)
+		return nil, SubscriptionTraffic{}, false, fmt.Errorf("订阅返回 HTTP %d", resp.StatusCode)
+	}
+	if len(bytesTrimSpace(body)) == 0 {
+		return nil, SubscriptionTraffic{}, false, fmt.Errorf("订阅内容为空")
 	}
 
 	info := firstHeaderValue(resp.Header, "subscription-userinfo", "Subscription-Userinfo")
 	if info == "" {
-		return SubscriptionTraffic{}, fmt.Errorf("该订阅未返回流量信息")
+		return body, SubscriptionTraffic{}, false, nil
 	}
-	return parseSubscriptionUserinfo(info), nil
+	return body, parseSubscriptionUserinfo(info), true, nil
 }
 
 func firstHeaderValue(h http.Header, names ...string) string {
@@ -229,7 +270,6 @@ func firstHeaderValue(h http.Header, names ...string) string {
 			return v
 		}
 	}
-	// 兼容部分网关把 header key 改写成非规范大小写
 	for k, values := range h {
 		if strings.EqualFold(k, "subscription-userinfo") && len(values) > 0 {
 			if v := strings.TrimSpace(values[0]); v != "" {
@@ -251,7 +291,6 @@ func parseSubscriptionUserinfo(raw string) SubscriptionTraffic {
 		key := strings.ToLower(strings.TrimSpace(kv[0]))
 		val, err := strconv.ParseInt(strings.TrimSpace(kv[1]), 10, 64)
 		if err != nil {
-			// 兼容少数机场返回浮点字节数
 			if f, fErr := strconv.ParseFloat(strings.TrimSpace(kv[1]), 64); fErr == nil {
 				val = int64(f)
 			} else {

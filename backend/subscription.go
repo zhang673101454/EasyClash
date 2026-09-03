@@ -249,16 +249,19 @@ func syncProvidersToConfig(configDir string, items []Subscription) error {
 	if err != nil {
 		return err
 	}
-	normalizeRuntimeConfig(cfg)
-
 	providers := map[string]any{}
 	enabledIDs := make([]any, 0, 1)
 	keep := map[string]struct{}{}
 	for _, item := range items {
+		keep[item.ID] = struct{}{}
 		if !item.Enabled {
 			continue
 		}
-		providers[item.ID] = newProviderEntry(item.ID, item.URL)
+		if hasProviderSourceFile(configDir, item.ID) {
+			providers[item.ID] = newFileProviderEntry(item.ID)
+		} else {
+			providers[item.ID] = newProviderEntry(item.ID, item.URL)
+		}
 		enabledIDs = append(enabledIDs, item.ID)
 		keep[item.ID] = struct{}{}
 	}
@@ -266,6 +269,7 @@ func syncProvidersToConfig(configDir string, items []Subscription) error {
 	if err := ensureProxyGroupUses(cfg, enabledIDs); err != nil {
 		return err
 	}
+	normalizeRuntimeConfig(cfg)
 	cleanupProviderFiles(configDir, keep)
 
 	data, err := yaml.Marshal(cfg)
@@ -285,6 +289,7 @@ func newProviderEntry(id, rawURL string) map[string]any {
 		"url":      rawURL,
 		"path":     "./providers/" + id + ".yaml",
 		"interval": 3600,
+		"proxy":    "DIRECT",
 		"header": map[string]any{
 			"User-Agent": []any{"clash.meta"},
 		},
@@ -294,6 +299,53 @@ func newProviderEntry(id, rawURL string) map[string]any {
 			"interval": 300,
 		},
 	}
+}
+
+func newFileProviderEntry(id string) map[string]any {
+	return map[string]any{
+		"type":     "file",
+		"path":     "./providers/" + id + ".source",
+		"interval": 86400,
+		"proxy":    "DIRECT",
+		"health-check": map[string]any{
+			"enable":   false,
+			"url":      delayTestURL,
+			"interval": 300,
+		},
+	}
+}
+
+func providerSourcePath(configDir, id string) string {
+	return filepath.Join(configDir, "providers", id+".source")
+}
+
+func hasProviderSourceFile(configDir, id string) bool {
+	info, err := os.Stat(providerSourcePath(configDir, id))
+	return err == nil && !info.IsDir() && info.Size() > 0
+}
+
+// NeedsProviderBootstrap 尚无本地节点缓存，需先拉取订阅内容。
+func NeedsProviderBootstrap(configDir, id string) bool {
+	return !hasProviderSourceFile(configDir, id)
+}
+
+// SaveProviderSource 保存订阅原始内容，供 mihomo 从本地文件加载节点。
+func SaveProviderSource(configDir, id string, data []byte) error {
+	data = bytesTrimSpace(data)
+	if len(data) == 0 {
+		return fmt.Errorf("订阅内容为空")
+	}
+	if err := os.MkdirAll(filepath.Join(configDir, "providers"), 0o755); err != nil {
+		return fmt.Errorf("创建 providers 目录失败: %w", err)
+	}
+	if err := os.WriteFile(providerSourcePath(configDir, id), data, 0o644); err != nil {
+		return fmt.Errorf("写入订阅节点缓存失败: %w", err)
+	}
+	return nil
+}
+
+func bytesTrimSpace(data []byte) []byte {
+	return []byte(strings.TrimSpace(string(data)))
 }
 
 func SameSubscribeURL(left, right string) bool {
@@ -524,10 +576,8 @@ func normalizeRuntimeConfig(cfg map[string]any) bool {
 	changed := false
 	delete(cfg, "geox-url")
 
-	safeRules := make([]any, len(SmartRoutingRules()))
-	for i, rule := range SmartRoutingRules() {
-		safeRules[i] = rule
-	}
+	providers, _ := cfg["proxy-providers"].(map[string]any)
+	safeRules := BuildRoutingRules(providers)
 	if !rulesEqual(cfg["rules"], safeRules) {
 		cfg["rules"] = safeRules
 		changed = true
@@ -560,7 +610,6 @@ func normalizeRuntimeConfig(cfg map[string]any) bool {
 		}
 	}
 
-	providers, _ := cfg["proxy-providers"].(map[string]any)
 	if providers != nil {
 		for _, value := range providers {
 			provider, ok := value.(map[string]any)

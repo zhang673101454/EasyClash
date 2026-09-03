@@ -95,21 +95,9 @@ function onToggleTheme() {
       <button
         class="sp-btn-icon"
         type="button"
-        aria-label="隐藏到侧边栏"
-        title="侧边栏"
+        aria-label="最小化到悬浮窗"
+        title="悬浮窗"
         @click="store.setCompact(true)"
-      >
-        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="4" width="18" height="16" rx="2" />
-          <path d="M15 4v16" />
-        </svg>
-      </button>
-      <button
-        class="sp-btn-icon"
-        type="button"
-        aria-label="最小化到托盘"
-        title="最小化"
-        @click="hideWindow"
       >
         <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
           <path d="M5 12h14" />

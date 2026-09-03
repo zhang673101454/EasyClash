@@ -164,8 +164,8 @@ async function refreshTraffic(event: Event, id: string) {
           <button
             class="sp-btn-icon"
             type="button"
-            aria-label="刷新流量"
-            title="刷新流量"
+            aria-label="刷新流量与节点"
+            title="刷新流量与节点（需先开启代理）"
             :disabled="refreshingId === item.id"
             @click="refreshTraffic($event, item.id)"
           >

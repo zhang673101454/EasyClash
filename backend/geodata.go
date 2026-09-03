@@ -3,8 +3,11 @@ package backend
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
 const (
@@ -16,15 +19,60 @@ var bundledGeoFiles = []string{geoipFileName, geositeFileName}
 
 // SmartRoutingRules 国内直连、其余走代理（需 geoip.metadb + geosite.dat）。
 func SmartRoutingRules() []any {
-	return []any{
+	return BuildRoutingRules(nil)
+}
+
+// BuildRoutingRules 生成路由规则；providers 中的订阅域名会插入 DIRECT，避免无节点时拉取订阅走 PROXY 死循环。
+func BuildRoutingRules(providers map[string]any) []any {
+	rules := []any{
 		"IP-CIDR,127.0.0.0/8,DIRECT",
 		"IP-CIDR,10.0.0.0/8,DIRECT",
 		"IP-CIDR,172.16.0.0/12,DIRECT",
 		"IP-CIDR,192.168.0.0/16,DIRECT",
+	}
+	for _, host := range subscriptionProviderHosts(providers) {
+		rules = append(rules, "DOMAIN-SUFFIX,"+host+",DIRECT")
+	}
+	rules = append(rules,
 		"GEOSITE,cn,DIRECT",
 		"GEOIP,CN,DIRECT",
 		"MATCH,PROXY",
+	)
+	return rules
+}
+
+func subscriptionProviderHosts(providers map[string]any) []string {
+	if len(providers) == 0 {
+		return nil
 	}
+	seen := map[string]struct{}{}
+	hosts := make([]string, 0, len(providers))
+	for _, value := range providers {
+		provider, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		rawURL, _ := provider["url"].(string)
+		host := subscriptionHostFromURL(rawURL)
+		if host == "" {
+			continue
+		}
+		if _, exists := seen[host]; exists {
+			continue
+		}
+		seen[host] = struct{}{}
+		hosts = append(hosts, host)
+	}
+	sort.Strings(hosts)
+	return hosts
+}
+
+func subscriptionHostFromURL(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	return strings.ToLower(parsed.Hostname())
 }
 
 // EnsureGeoDataInConfigDir 把内置 geodata 复制到 mihomo 配置目录（-d）。

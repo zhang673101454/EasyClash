@@ -2,10 +2,47 @@ package main
 
 import (
 	"log/slog"
+	"sync"
 
 	"github.com/energye/systray"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+var (
+	trayToggleItem *systray.MenuItem
+	trayToggleMu   sync.Mutex
+)
+
+func setTrayToggleItem(item *systray.MenuItem) {
+	trayToggleMu.Lock()
+	trayToggleItem = item
+	trayToggleMu.Unlock()
+}
+
+func updateTrayProxyMenu(connected bool) {
+	trayToggleMu.Lock()
+	item := trayToggleItem
+	trayToggleMu.Unlock()
+	if item == nil {
+		return
+	}
+	if connected {
+		item.SetTitle("关闭代理")
+		item.SetTooltip("代理已开启")
+		item.Check()
+	} else {
+		item.SetTitle("开启代理")
+		item.SetTooltip("代理已关闭")
+		item.Uncheck()
+	}
+}
+
+func (a *App) refreshTrayProxyMenu() {
+	a.mu.Lock()
+	running := a.manager != nil && a.manager.Running()
+	a.mu.Unlock()
+	updateTrayProxyMenu(running)
+}
 
 func (a *App) startTray() {
 	go systray.Run(a.onTrayReady, func() {
@@ -19,7 +56,9 @@ func (a *App) onTrayReady() {
 	systray.SetTooltip("EasyClash")
 
 	showItem := systray.AddMenuItem("显示主窗口", "显示主窗口")
-	toggleItem := systray.AddMenuItem("开启/关闭代理", "开启或关闭系统代理")
+	toggleItem := systray.AddMenuItem("开启代理", "代理已关闭")
+	setTrayToggleItem(toggleItem)
+	a.refreshTrayProxyMenu()
 	systray.AddSeparator()
 	quitItem := systray.AddMenuItem("退出", "退出 EasyClash")
 
@@ -47,6 +86,7 @@ func (a *App) onTrayReady() {
 		a.showMainWindow()
 	})
 	systray.SetOnRClick(func(menu systray.IMenu) {
+		a.refreshTrayProxyMenu()
 		if err := menu.ShowMenu(); err != nil {
 			slog.Warn("显示托盘菜单失败", "error", err)
 		}

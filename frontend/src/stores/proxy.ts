@@ -241,6 +241,9 @@ export const useProxyStore = defineStore('proxy', () => {
             }
           : sub,
       )
+      if (!silent) {
+        showToast('已刷新流量与节点')
+      }
     } catch (err) {
       if (!silent) {
         showToast(errorMessage(err))

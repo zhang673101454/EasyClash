@@ -697,6 +697,29 @@ func (c *MihomoClient) TunEnabled(ctx context.Context) (bool, error) {
 	}
 }
 
+// CountProviderProxies 返回订阅 provider 中的可用节点数。
+func (c *MihomoClient) CountProviderProxies(ctx context.Context, name string) (int, error) {
+	var result providersResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/providers/proxies", nil, &result); err != nil {
+		return 0, err
+	}
+	provider, ok := result.Providers[name]
+	if !ok {
+		return 0, fmt.Errorf("找不到订阅提供者 %s", name)
+	}
+	count := 0
+	for _, info := range provider.Proxies {
+		if info.Name == "" || isGroupProxy(info.Type) {
+			continue
+		}
+		if _, skip := skippedNodes[info.Name]; skip {
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
 func isHTTPProvider(vehicleType string) bool {
 	switch strings.ToLower(vehicleType) {
 	case "http", "file":

@@ -111,6 +111,7 @@ func (a *App) beforeClose(ctx context.Context) bool {
 }
 
 func (a *App) emitStatus(status ProxyStatus) {
+	updateTrayProxyMenu(status.Connected)
 	if a.ctx == nil {
 		return
 	}
@@ -503,6 +504,7 @@ func (a *App) runWarmup(ctx context.Context) {
 	}
 	if err := a.client.WaitForProxyNodes(ctx); err != nil {
 		slog.Warn("等待节点列表超时", "error", err)
+		a.emitProviderWarning(names)
 		return
 	}
 
@@ -524,6 +526,26 @@ func (a *App) runWarmup(ctx context.Context) {
 	if err == nil && (sel.Name == "" || sel.Name == "DIRECT") {
 		slog.Warn("当前仍为 DIRECT，再次尝试自动选节点")
 		a.autoSelectOnce(ctx, true, false)
+	}
+}
+
+func (a *App) emitProviderWarning(providerNames []string) {
+	if a.ctx == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
+	defer cancel()
+	for _, name := range providerNames {
+		count, err := a.client.CountProviderProxies(ctx, name)
+		if err != nil {
+			slog.Debug("检查订阅节点失败", "provider", name, "error", err)
+			continue
+		}
+		if count > 0 {
+			continue
+		}
+		msg := fmt.Sprintf("订阅 %s 未加载到节点，请尝试刷新或切换网络", name)
+		runtime.EventsEmit(a.ctx, "proxy:error", msg)
 	}
 }
 
@@ -585,16 +607,45 @@ func (a *App) GetSubscriptions() ([]SubscriptionItem, error) {
 	return subscriptionItemsWithTraffic(dir, items)
 }
 
-// RefreshSubscriptionTraffic 刷新指定订阅的流量信息。
+// RefreshSubscriptionTraffic 刷新指定订阅的流量与节点缓存（可走当前已开启的代理）。
 func (a *App) RefreshSubscriptionTraffic(id string) (SubscriptionItem, error) {
 	dir, err := a.configDir()
 	if err != nil {
 		return SubscriptionItem{}, err
 	}
-	traffic, err := backend.RefreshSubscriptionTraffic(dir, id)
+	result, err := backend.RefreshSubscriptionTraffic(dir, id)
 	if err != nil {
 		return SubscriptionItem{}, err
 	}
+
+	a.mu.Lock()
+	shouldReload := result.NodesSaved && a.manager != nil && a.manager.Running()
+	if shouldReload {
+		items, listErr := backend.ListSubscriptions(dir)
+		if listErr != nil {
+			shouldReload = false
+		} else {
+			shouldReload = false
+			for _, item := range items {
+				if item.ID == id && item.Enabled {
+					shouldReload = true
+					break
+				}
+			}
+		}
+	}
+	a.mu.Unlock()
+	if shouldReload {
+		a.mu.Lock()
+		reloadErr := a.reloadLocked()
+		a.mu.Unlock()
+		if reloadErr != nil {
+			slog.Warn("刷新订阅后重载代理失败", "id", id, "error", reloadErr)
+		} else {
+			a.startWarmup()
+		}
+	}
+
 	items, err := backend.ListSubscriptions(dir)
 	if err != nil {
 		return SubscriptionItem{}, err
@@ -602,6 +653,12 @@ func (a *App) RefreshSubscriptionTraffic(id string) (SubscriptionItem, error) {
 	for _, item := range items {
 		if item.ID != id {
 			continue
+		}
+		traffic := result.Traffic
+		if traffic.UpdatedAt == 0 {
+			if cached, ok := backend.GetSubscriptionTrafficCache(dir, id); ok {
+				traffic = cached
+			}
 		}
 		return SubscriptionItem{
 			ID:        item.ID,
@@ -726,13 +783,15 @@ func (a *App) RemoveSubscription(id string) ([]SubscriptionItem, error) {
 // UseSubscription 点击订阅：未在使用则独占启用并开启代理，再点同一条则关闭。
 func (a *App) UseSubscription(id string) (ProxyStatus, error) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.manager == nil {
+		a.mu.Unlock()
 		return ProxyStatus{}, fmt.Errorf("后端尚未初始化")
 	}
 
-	items, err := backend.ListSubscriptions(a.manager.ConfigDir())
+	configDir := a.manager.ConfigDir()
+	items, err := backend.ListSubscriptions(configDir)
 	if err != nil {
+		a.mu.Unlock()
 		return ProxyStatus{}, err
 	}
 	var target *backend.Subscription
@@ -743,22 +802,50 @@ func (a *App) UseSubscription(id string) (ProxyStatus, error) {
 		}
 	}
 	if target == nil {
+		a.mu.Unlock()
 		return ProxyStatus{}, fmt.Errorf("找不到该订阅")
 	}
 
 	if target.Enabled && a.manager.Running() {
-		if _, err := backend.SetSubscriptionEnabled(a.manager.ConfigDir(), id, false); err != nil {
+		if _, err := backend.SetSubscriptionEnabled(configDir, id, false); err != nil {
+			a.mu.Unlock()
 			return ProxyStatus{}, err
 		}
 		status, err := a.disableLocked()
 		if err != nil {
+			a.mu.Unlock()
 			return status, err
 		}
 		a.emitStatus(status)
+		a.mu.Unlock()
 		return status, nil
 	}
 
-	if _, err := backend.SetSubscriptionEnabled(a.manager.ConfigDir(), id, true); err != nil {
+	prevEnabled := ""
+	for _, item := range items {
+		if item.Enabled {
+			prevEnabled = item.ID
+			break
+		}
+	}
+	needsBootstrap := a.manager.Running() && backend.NeedsProviderBootstrap(configDir, id)
+	a.mu.Unlock()
+
+	if needsBootstrap {
+		if _, err := backend.RefreshSubscriptionTraffic(configDir, id); err != nil {
+			slog.Debug("切换前静默拉取订阅失败", "id", id, "error", err)
+		}
+	}
+
+	a.mu.Lock()
+	if a.manager == nil {
+		a.mu.Unlock()
+		return ProxyStatus{}, fmt.Errorf("后端尚未初始化")
+	}
+	configDir = a.manager.ConfigDir()
+
+	if _, err := backend.SetSubscriptionEnabled(configDir, id, true); err != nil {
+		a.mu.Unlock()
 		return ProxyStatus{}, err
 	}
 
@@ -766,9 +853,20 @@ func (a *App) UseSubscription(id string) (ProxyStatus, error) {
 	var status ProxyStatus
 	if wasRunning {
 		if err := a.reloadLocked(); err != nil {
-			_ = backend.SetSystemProxy(false)
-			status = a.decorateStatus(ProxyStatus{Connected: false, Message: "切换失败，已关闭代理"})
+			_, _ = backend.SetSubscriptionEnabled(configDir, id, false)
+			if prevEnabled != "" && prevEnabled != id {
+				if _, enableErr := backend.SetSubscriptionEnabled(configDir, prevEnabled, true); enableErr == nil {
+					if reloadErr := a.reloadLocked(); reloadErr != nil {
+						slog.Warn("切换失败后回滚订阅也失败", "error", reloadErr)
+						_ = backend.SetSystemProxy(false)
+					}
+				}
+			} else {
+				_ = backend.SetSystemProxy(false)
+			}
+			status = a.decorateStatus(ProxyStatus{Connected: false, Message: "切换失败，已恢复上一订阅"})
 			a.emitStatus(status)
+			a.mu.Unlock()
 			return status, fmt.Errorf("切换订阅失败: %w", err)
 		}
 		var statusErr error
@@ -777,14 +875,16 @@ func (a *App) UseSubscription(id string) (ProxyStatus, error) {
 			status = a.decorateStatus(ProxyStatus{Connected: true, Message: "已连接"})
 		}
 	} else {
-		var err error
-		status, err = a.enableLocked()
-		if err != nil {
-			return status, err
+		var enableErr error
+		status, enableErr = a.enableLocked()
+		if enableErr != nil {
+			a.mu.Unlock()
+			return status, enableErr
 		}
 	}
 	a.emitStatus(status)
 	a.onProxyEnabled()
+	a.mu.Unlock()
 	return status, nil
 }
 

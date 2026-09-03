@@ -69,7 +69,7 @@ const intervalOptions = [5, 10, 15, 30, 60]
     </div>
 
     <p class="px-1 text-[10px] leading-relaxed text-[var(--text-faint)]">
-      启用订阅时会立即选一次最快节点。Tun 模式需要管理员权限。点击 × 或 − 会最小化到系统托盘，托盘图标右键可退出。
+      启用订阅时会立即选一次最快节点。Tun 模式需要管理员权限。点击 − 进入悬浮窗，× 隐藏到托盘；悬浮窗右键可隐藏到托盘。
     </p>
   </section>
 </template>
