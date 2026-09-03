@@ -151,7 +151,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1 -Nsis
 <details>
 <summary>如果这个工具有帮到你</summary>
 
-请我喝杯咖啡：
+请我喝杯咖啡，冰红茶也行，实在不行就矿泉水：
 
 <img src="docs/screenshots/donate-alipay.jpg" alt="支付宝" width="160">
 
