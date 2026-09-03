@@ -19,8 +19,8 @@ const store = useProxyStore()
         </svg>
       </span>
       <span class="sp-picker-copy">
-        <span class="sp-picker-label">规则模式</span>
-        <span class="sp-picker-hint">{{ !store.tun ? '默认 · 系统代理' : '点击切换' }}</span>
+        <span class="sp-picker-label">智能模式</span>
+        <span class="sp-picker-hint">{{ !store.tun ? '国内直连 · 系统代理' : '点击切换' }}</span>
       </span>
     </button>
     <button

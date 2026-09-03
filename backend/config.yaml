@@ -1,5 +1,5 @@
 # EasyClash 内置极简配置。API 仅绑定本机，切勿改为 0.0.0.0。
-# 不使用 GEOIP：首次启动下载 MMDB 在国内经常超时，导致开关失败。
+# 智能分流：GEOSITE/GEOIP 识别国内直连，其余走代理；geodata 随安装包内置，无需在线下载。
 mixed-port: 7890
 allow-lan: false
 bind-address: 127.0.0.1
@@ -8,11 +8,17 @@ log-level: info
 ipv6: false
 external-controller: 127.0.0.1:9090
 unified-delay: true
+geodata-mode: true
+geo-auto-update: false
 
 dns:
   enable: true
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - '*.lan'
+    - '*.local'
+    - geosite:cn
   nameserver:
     - 223.5.5.5
     - 119.29.29.29
@@ -28,4 +34,6 @@ rules:
   - IP-CIDR,10.0.0.0/8,DIRECT
   - IP-CIDR,172.16.0.0/12,DIRECT
   - IP-CIDR,192.168.0.0/16,DIRECT
+  - GEOSITE,cn,DIRECT
+  - GEOIP,CN,DIRECT
   - MATCH,PROXY

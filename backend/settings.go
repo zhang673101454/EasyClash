@@ -19,7 +19,7 @@ const (
 	AutoSelectImprovementMs      = 80
 )
 
-// AppSettings 持久化的应用设置。捕获方式：规则模式（默认，系统代理）或 TUN，始终为 rule。
+// AppSettings 持久化的应用设置。捕获方式：智能模式（默认，系统代理）或 TUN，始终为 rule。
 type AppSettings struct {
 	Tun                   bool `json:"tun"`
 	Mode                  string `json:"mode"`
@@ -60,7 +60,7 @@ func normalizeSettings(s AppSettings) AppSettings {
 	return s
 }
 
-// LoadSettings 读取设置，缺省为规则模式。
+// LoadSettings 读取设置，缺省为智能模式。
 func LoadSettings(configDir string) AppSettings {
 	data, err := os.ReadFile(settingsPath(configDir))
 	if err != nil {
@@ -90,7 +90,7 @@ func SaveSettings(configDir string, s AppSettings) error {
 	return nil
 }
 
-// ApplySettingsToConfig 把 TUN / 规则模式写入 mihomo 配置（始终 rule，不提供 global）。
+// ApplySettingsToConfig 把 TUN / 智能模式写入 mihomo 配置（始终 rule，不提供 global）。
 func ApplySettingsToConfig(configDir string, s AppSettings) error {
 	cfg, err := loadConfigMap(configDir)
 	if err != nil {

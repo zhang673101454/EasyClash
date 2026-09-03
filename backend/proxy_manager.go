@@ -46,6 +46,9 @@ func NewProxyManager() (*ProxyManager, error) {
 	if err := normalizeConfigFile(configDir); err != nil {
 		slog.Warn("规范化配置失败", "error", err)
 	}
+	if err := EnsureGeoDataInConfigDir(configDir); err != nil {
+		slog.Warn("准备 geodata 失败", "error", err)
+	}
 	if err := ApplySettingsToConfig(configDir, LoadSettings(configDir)); err != nil {
 		slog.Warn("应用运行设置失败", "error", err)
 	}
@@ -86,6 +89,9 @@ func (m *ProxyManager) Start(ctx context.Context) error {
 	m.binaryPath = bin
 	if err := EnsureWintunBeside(bin); err != nil {
 		slog.Warn("准备 wintun.dll 失败", "error", err)
+	}
+	if err := EnsureGeoDataInConfigDir(m.configDir); err != nil {
+		return fmt.Errorf("准备 geo 数据库失败: %w", err)
 	}
 
 	cmd := exec.Command(bin, "-d", m.configDir)

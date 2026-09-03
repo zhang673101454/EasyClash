@@ -98,6 +98,8 @@ Section
     !insertmacro wails.files
     File "..\..\..\resources\mihomo.exe"
     File "..\..\..\resources\wintun.dll"
+    File "..\..\..\resources\geoip.metadb"
+    File "..\..\..\resources\geosite.dat"
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"

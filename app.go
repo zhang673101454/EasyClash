@@ -792,7 +792,7 @@ func connectedStatus(name string, latency int) ProxyStatus {
 		return ProxyStatus{
 			Connected: true,
 			NodeName:  "",
-			Message:   "已连接 - 规则模式",
+			Message:   "已连接 - 智能模式",
 		}
 	}
 	if latency > 0 {

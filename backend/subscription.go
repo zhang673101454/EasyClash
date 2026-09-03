@@ -500,21 +500,37 @@ func normalizeRuntimeConfig(cfg map[string]any) bool {
 	changed := false
 	delete(cfg, "geox-url")
 
-	safeRules := []any{
-		"IP-CIDR,127.0.0.0/8,DIRECT",
-		"IP-CIDR,10.0.0.0/8,DIRECT",
-		"IP-CIDR,172.16.0.0/12,DIRECT",
-		"IP-CIDR,192.168.0.0/16,DIRECT",
-		"MATCH,PROXY",
+	safeRules := make([]any, len(SmartRoutingRules()))
+	for i, rule := range SmartRoutingRules() {
+		safeRules[i] = rule
 	}
 	if !rulesEqual(cfg["rules"], safeRules) {
 		cfg["rules"] = safeRules
 		changed = true
 	}
 
+	if cfg["geodata-mode"] != true {
+		cfg["geodata-mode"] = true
+		changed = true
+	}
+	if cfg["geo-auto-update"] != false {
+		cfg["geo-auto-update"] = false
+		changed = true
+	}
+
 	if dns, ok := cfg["dns"].(map[string]any); ok {
 		if _, exists := dns["listen"]; exists {
 			delete(dns, "listen")
+			cfg["dns"] = dns
+			changed = true
+		}
+		if !dnsHasFakeIPFilterCN(dns) {
+			filter, _ := dns["fake-ip-filter"].([]any)
+			if filter == nil {
+				filter = []any{}
+			}
+			filter = appendUniqueString(filter, "*.lan", "*.local", "geosite:cn")
+			dns["fake-ip-filter"] = filter
 			cfg["dns"] = dns
 			changed = true
 		}
@@ -554,4 +570,34 @@ func rulesEqual(current any, want []any) bool {
 		}
 	}
 	return true
+}
+
+func dnsHasFakeIPFilterCN(dns map[string]any) bool {
+	filter, ok := dns["fake-ip-filter"].([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range filter {
+		if s, ok := item.(string); ok && s == "geosite:cn" {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueString(list []any, values ...string) []any {
+	seen := map[string]struct{}{}
+	for _, item := range list {
+		if s, ok := item.(string); ok {
+			seen[s] = struct{}{}
+		}
+	}
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		list = append(list, value)
+		seen[value] = struct{}{}
+	}
+	return list
 }
