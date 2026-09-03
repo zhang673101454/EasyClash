@@ -100,9 +100,14 @@ Section
     File "..\..\..\resources\wintun.dll"
     File "..\..\..\resources\geoip.metadb"
     File "..\..\..\resources\geosite.dat"
+    File "..\icon.ico"
 
-    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
-    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    ; 先删旧快捷方式，避免 Windows 沿用缓存图标
+    Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
+    Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
+
+    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}" "" "$INSTDIR\icon.ico" 0
+    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}" "" "$INSTDIR\icon.ico" 0
 
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
@@ -125,12 +130,12 @@ Section "uninstall"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" "EasyClashProxyOverride"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" "EasyClashProxyEnable"
 
+    Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
+    Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
+
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
     RMDir /r $INSTDIR
-
-    Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
-    Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
 
     !insertmacro wails.unassociateFiles
     !insertmacro wails.unassociateCustomProtocols
