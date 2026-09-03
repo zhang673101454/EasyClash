@@ -81,6 +81,18 @@ Go + Wails v2 + Vue 3 + Pinia + TailwindCSS，底层 [mihomo](https://github.com
 
 ---
 
+## 打赏
+
+如果 EasyClash 对你有帮助，欢迎请我喝杯咖啡 ☕
+
+<p align="center">
+  <img src="docs/screenshots/donate-alipay.jpg" alt="支付宝打赏" width="280">
+</p>
+
+<p align="center">支付宝扫码 · feier(*豪)</p>
+
+---
+
 ## 开发与打包
 
 <details>
