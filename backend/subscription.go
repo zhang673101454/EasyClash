@@ -119,6 +119,11 @@ func AddSubscription(configDir, rawURL, remark string) ([]Subscription, error) {
 
 // SetSubscriptionRemark 更新订阅备注。
 func SetSubscriptionRemark(configDir, id, remark string) ([]Subscription, error) {
+	return UpdateSubscription(configDir, id, "", remark, false)
+}
+
+// UpdateSubscription 更新订阅链接与备注。rawURL 为空时保留原链接。
+func UpdateSubscription(configDir, id, rawURL, remark string, requireURL bool) ([]Subscription, error) {
 	items, err := ListSubscriptions(configDir)
 	if err != nil {
 		return nil, err
@@ -128,8 +133,27 @@ func SetSubscriptionRemark(configDir, id, remark string) ([]Subscription, error)
 		if items[i].ID != id {
 			continue
 		}
-		items[i].Remark = strings.TrimSpace(remark)
 		found = true
+		nextURL := strings.TrimSpace(rawURL)
+		if nextURL == "" {
+			if requireURL {
+				return nil, fmt.Errorf("请填写订阅链接")
+			}
+			nextURL = items[i].URL
+		}
+		if err := validateSubscribeURL(nextURL); err != nil {
+			return nil, err
+		}
+		for j := range items {
+			if j == i {
+				continue
+			}
+			if sameSubscribeURL(items[j].URL, nextURL) {
+				return nil, fmt.Errorf("该订阅链接已存在")
+			}
+		}
+		items[i].URL = nextURL
+		items[i].Remark = strings.TrimSpace(remark)
 		break
 	}
 	if !found {

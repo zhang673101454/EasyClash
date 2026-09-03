@@ -11,6 +11,7 @@ import {
 
 const store = useProxyStore()
 const editingId = ref('')
+const editingUrl = ref('')
 const editingRemark = ref('')
 const refreshingId = ref('')
 
@@ -35,21 +36,23 @@ function isActive(item: { enabled: boolean }): boolean {
   return Boolean(item.enabled && store.connected)
 }
 
-function startEdit(event: Event, id: string, remark: string) {
+function startEdit(event: Event, id: string, url: string, remark: string) {
   event.stopPropagation()
   editingId.value = id
+  editingUrl.value = url
   editingRemark.value = remark || ''
 }
 
 function cancelEdit(event?: Event) {
   event?.stopPropagation()
   editingId.value = ''
+  editingUrl.value = ''
   editingRemark.value = ''
 }
 
 async function saveEdit(event: Event, id: string) {
   event.stopPropagation()
-  await store.updateRemark(id, editingRemark.value)
+  await store.updateSubscription(id, editingUrl.value, editingRemark.value)
   cancelEdit()
 }
 
@@ -122,12 +125,21 @@ async function refreshTraffic(event: Event, id: string) {
         <div class="min-w-0 flex-1">
           <template v-if="editingId === item.id">
             <input
-              v-model="editingRemark"
+              v-model="editingUrl"
               class="sp-input w-full rounded-lg px-2 py-1 text-xs outline-none"
+              type="url"
+              placeholder="订阅 URL"
+              autofocus
+              @click.stop
+              @keydown.enter="saveEdit($event, item.id)"
+              @keydown.esc="cancelEdit($event)"
+            />
+            <input
+              v-model="editingRemark"
+              class="sp-input mt-1.5 w-full rounded-lg px-2 py-1 text-xs outline-none"
               type="text"
               maxlength="40"
-              placeholder="输入备注"
-              autofocus
+              placeholder="备注（可选）"
               @click.stop
               @keydown.enter="saveEdit($event, item.id)"
               @keydown.esc="cancelEdit($event)"
@@ -187,9 +199,9 @@ async function refreshTraffic(event: Event, id: string) {
             v-else
             class="sp-btn-icon"
             type="button"
-            aria-label="编辑备注"
-            title="编辑备注"
-            @click="startEdit($event, item.id, item.remark)"
+            aria-label="编辑订阅"
+            title="编辑"
+            @click="startEdit($event, item.id, item.url, item.remark)"
           >
             <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 20h9" />

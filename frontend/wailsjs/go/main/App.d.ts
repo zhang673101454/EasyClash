@@ -41,4 +41,6 @@ export function ShouldStartCompact():Promise<boolean>;
 
 export function ToggleProxy():Promise<main.ProxyStatus>;
 
+export function UpdateSubscription(arg1:string,arg2:string,arg3:string):Promise<Array<main.SubscriptionItem>>;
+
 export function UseSubscription(arg1:string):Promise<main.ProxyStatus>;

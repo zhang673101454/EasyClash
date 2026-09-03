@@ -43,6 +43,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	slog.Info("EasyClash 启动")
+	a.startTray()
 
 	manager, err := backend.NewProxyManager()
 	if err != nil {
@@ -55,8 +56,24 @@ func (a *App) startup(ctx context.Context) {
 	if err := backend.DisableSystemProxyIfOurs(); err != nil {
 		slog.Warn("启动时清理残留系统代理失败", "error", err)
 	}
-	a.startTray()
 	backend.RefreshAutoStartCommand()
+}
+
+func ensureActiveSubscription(configDir string) error {
+	items, err := backend.ListSubscriptions(configDir)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.Enabled {
+			return nil
+		}
+	}
+	if len(items) == 0 {
+		return fmt.Errorf("请先添加订阅")
+	}
+	_, err = backend.SetSubscriptionEnabled(configDir, items[0].ID, true)
+	return err
 }
 
 func (a *App) onMihomoUnexpectedExit() {
@@ -135,19 +152,8 @@ func (a *App) ToggleProxy() (ProxyStatus, error) {
 		a.emitStatus(status)
 		return status, nil
 	}
-	items, err := backend.ListSubscriptions(a.manager.ConfigDir())
-	if err != nil {
-		return ProxyStatus{}, err
-	}
-	hasEnabled := false
-	for _, item := range items {
-		if item.Enabled {
-			hasEnabled = true
-			break
-		}
-	}
-	if !hasEnabled {
-		return ProxyStatus{Message: "未连接"}, fmt.Errorf("请先点击一个订阅开始使用")
+	if err := ensureActiveSubscription(a.manager.ConfigDir()); err != nil {
+		return ProxyStatus{Message: "未连接"}, err
 	}
 	status, err := a.enableLocked()
 	if err != nil {
@@ -639,15 +645,45 @@ func (a *App) AddSubscription(rawURL string, remark string) ([]SubscriptionItem,
 
 // SetSubscriptionRemark 更新订阅备注。
 func (a *App) SetSubscriptionRemark(id string, remark string) ([]SubscriptionItem, error) {
+	return a.UpdateSubscription(id, "", remark)
+}
+
+// UpdateSubscription 更新订阅链接与备注。rawURL 为空时保留原链接。
+func (a *App) UpdateSubscription(id string, rawURL string, remark string) ([]SubscriptionItem, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.manager == nil {
 		return nil, fmt.Errorf("后端尚未初始化")
 	}
 	configDir := a.manager.ConfigDir()
-	items, err := backend.SetSubscriptionRemark(configDir, id, remark)
+	items, err := backend.ListSubscriptions(configDir)
 	if err != nil {
 		return []SubscriptionItem{}, err
+	}
+	var oldURL string
+	wasEnabled := false
+	for _, item := range items {
+		if item.ID != id {
+			continue
+		}
+		oldURL = item.URL
+		wasEnabled = item.Enabled
+		break
+	}
+	items, err = backend.UpdateSubscription(configDir, id, rawURL, remark, false)
+	if err != nil {
+		return []SubscriptionItem{}, err
+	}
+	urlChanged := rawURL != "" && !backend.SameSubscribeURL(oldURL, rawURL)
+	if wasEnabled && urlChanged && a.manager.Running() {
+		if err := a.reloadLocked(); err != nil {
+			return []SubscriptionItem{}, fmt.Errorf("订阅已保存，但重载代理失败: %w", err)
+		}
+		go func(subID string) {
+			if _, fetchErr := backend.RefreshSubscriptionTraffic(configDir, subID); fetchErr != nil {
+				slog.Debug("更新订阅后刷新流量失败", "id", subID, "error", fetchErr)
+			}
+		}(id)
 	}
 	return subscriptionItemsWithTraffic(configDir, items)
 }

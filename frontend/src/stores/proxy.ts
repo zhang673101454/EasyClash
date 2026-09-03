@@ -16,7 +16,7 @@ import {
   SetAutoStart,
   SetCompactMode,
   ShouldStartCompact,
-  SetSubscriptionRemark,
+  UpdateSubscription,
   SetTunMode,
   ToggleProxy,
   UseSubscription,
@@ -367,12 +367,25 @@ export const useProxyStore = defineStore('proxy', () => {
     }
   }
 
-  async function updateRemark(id: string, remark: string) {
+  async function updateSubscription(id: string, url: string, remark: string) {
+    const nextUrl = url.trim()
+    if (!nextUrl) {
+      showToast('请填写订阅链接')
+      return
+    }
     try {
-      subscriptions.value = asSubscriptionList(await SetSubscriptionRemark(id, remark)) as Subscription[]
+      subscriptions.value = asSubscriptionList(
+        await UpdateSubscription(id, nextUrl, remark.trim()),
+      ) as Subscription[]
+      showToast('订阅已更新', 'ok')
+      await refresh()
     } catch (err) {
       showToast(errorMessage(err))
     }
+  }
+
+  async function updateRemark(id: string, remark: string) {
+    await updateSubscription(id, subscriptions.value.find((s) => s.id === id)?.url || '', remark)
   }
 
   async function selectNode(name: string) {
@@ -412,10 +425,6 @@ export const useProxyStore = defineStore('proxy', () => {
 
   async function toggle() {
     if (loading.value) {
-      return
-    }
-    if (!connected.value) {
-      await requireService()
       return
     }
     loading.value = true
@@ -584,6 +593,7 @@ export const useProxyStore = defineStore('proxy', () => {
     removeSubscription,
     toggleSubscription,
     updateRemark,
+    updateSubscription,
     selectNode,
     speedTest,
     toggle,

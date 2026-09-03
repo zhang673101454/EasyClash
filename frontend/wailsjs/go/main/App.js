@@ -78,6 +78,10 @@ export function ToggleProxy() {
   return window['go']['main']['App']['ToggleProxy']();
 }
 
+export function UpdateSubscription(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpdateSubscription'](arg1, arg2, arg3);
+}
+
 export function UseSubscription(arg1) {
   return window['go']['main']['App']['UseSubscription'](arg1);
 }

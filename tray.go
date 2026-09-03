@@ -27,18 +27,20 @@ func (a *App) onTrayReady() {
 		a.showMainWindow()
 	})
 	toggleItem.Click(func() {
-		status, err := a.ToggleProxy()
-		if err != nil {
-			slog.Error("托盘切换代理失败", "error", err)
-			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "proxy:error", err.Error())
+		go func() {
+			status, err := a.ToggleProxy()
+			if err != nil {
+				slog.Error("托盘切换代理失败", "error", err)
+				if a.ctx != nil {
+					runtime.EventsEmit(a.ctx, "proxy:error", err.Error())
+				}
+				return
 			}
-			return
-		}
-		a.emitStatus(status)
+			a.emitStatus(status)
+		}()
 	})
 	quitItem.Click(func() {
-		a.requestQuit()
+		go a.requestQuit()
 	})
 
 	systray.SetOnClick(func(menu systray.IMenu) {
