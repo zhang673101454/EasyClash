@@ -23,6 +23,10 @@ export function isBindingsNotReady(err: unknown): boolean {
   )
 }
 
+export function isRefreshCancelled(err: unknown): boolean {
+  return errorMessage(err).includes('已取消刷新')
+}
+
 export function isTransientLoadError(err: unknown): boolean {
   return isServiceNotReady(err) || isBindingsNotReady(err)
 }

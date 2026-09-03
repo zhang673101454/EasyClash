@@ -91,8 +91,14 @@ func GetSubscriptionTrafficCache(configDir, id string) (SubscriptionTraffic, boo
 	return traffic, ok
 }
 
+// SubscriptionFetchOptions 控制订阅 URL 拉取是否经本机 mixed-port。
+type SubscriptionFetchOptions struct {
+	// PreferProxy 为 true 表示 mihomo 正在运行：强制走 127.0.0.1:7890，且不再回退直连（被墙订阅直连必失败）。
+	PreferProxy bool
+}
+
 // RefreshSubscriptionTraffic 拉取订阅 URL：更新流量缓存，并保存节点内容到本地（可走当前已开启的代理）。
-func RefreshSubscriptionTraffic(ctx context.Context, configDir, id string) (SubscriptionRefreshResult, error) {
+func RefreshSubscriptionTraffic(ctx context.Context, configDir, id string, opts SubscriptionFetchOptions) (SubscriptionRefreshResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -111,11 +117,15 @@ func RefreshSubscriptionTraffic(ctx context.Context, configDir, id string) (Subs
 		return SubscriptionRefreshResult{}, fmt.Errorf("找不到该订阅")
 	}
 
-	body, traffic, hasTraffic, err := fetchSubscription(ctx, rawURL)
+	body, traffic, hasTraffic, err := fetchSubscription(ctx, rawURL, opts)
 	if err != nil {
 		return SubscriptionRefreshResult{}, err
 	}
 	if err := SaveProviderSource(configDir, id, body); err != nil {
+		return SubscriptionRefreshResult{}, err
+	}
+	items, err = ListSubscriptions(configDir)
+	if err != nil {
 		return SubscriptionRefreshResult{}, err
 	}
 	if err := syncProvidersToConfig(configDir, items); err != nil {
@@ -155,7 +165,7 @@ func RefreshAllSubscriptionTraffic(configDir string) (map[string]SubscriptionTra
 	}
 	for _, item := range items {
 		itemCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-		refreshed, refreshErr := RefreshSubscriptionTraffic(itemCtx, configDir, item.ID)
+		refreshed, refreshErr := RefreshSubscriptionTraffic(itemCtx, configDir, item.ID, SubscriptionFetchOptions{})
 		cancel()
 		if refreshErr != nil {
 			slog.Debug("刷新订阅失败", "id", item.ID, "error", refreshErr)
@@ -171,72 +181,108 @@ func RefreshAllSubscriptionTraffic(configDir string) (map[string]SubscriptionTra
 	return cache, nil
 }
 
-func fetchSubscription(ctx context.Context, rawURL string) ([]byte, SubscriptionTraffic, bool, error) {
-	clients := subscriptionTrafficClients()
-	attempts := 1
-	if localMixedProxyAvailable() {
-		attempts = 3
+func fetchSubscription(ctx context.Context, rawURL string, opts SubscriptionFetchOptions) ([]byte, SubscriptionTraffic, bool, error) {
+	preferProxy := opts.PreferProxy
+	viaProxy := preferProxy || localMixedProxyAvailable()
+	host := subscriptionHostFromURL(rawURL)
+	slog.Info("拉取订阅", "host", host, "viaProxy", viaProxy, "preferProxy", preferProxy)
+
+	type attempt struct {
+		client *http.Client
+		label  string
 	}
-	var lastErr error
-	for attempt := 0; attempt < attempts; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return nil, SubscriptionTraffic{}, false, ctx.Err()
-			case <-time.After(2 * time.Second):
-			}
+	attempts := make([]attempt, 0, 2)
+	if viaProxy {
+		if proxyURL, err := url.Parse("http://" + proxyServerValue); err == nil {
+			attempts = append(attempts, attempt{
+				label: "proxy",
+				client: &http.Client{
+					Timeout: 25 * time.Second,
+					Transport: subscriptionTransport(proxyURL),
+				},
+			})
 		}
-		for _, ua := range subscriptionTrafficUserAgents {
-			for _, client := range clients {
-				if err := ctx.Err(); err != nil {
-					return nil, SubscriptionTraffic{}, false, err
-				}
-				body, traffic, hasTraffic, err := fetchSubscriptionOnce(ctx, client, rawURL, ua)
-				if err == nil {
-					return body, traffic, hasTraffic, nil
-				}
-				lastErr = err
+	}
+	// 代理已开启时不回退直连（被墙域名直连只会超时/被 RST，且会误导用户）
+	if !preferProxy {
+		attempts = append(attempts, attempt{
+			label: "direct",
+			client: &http.Client{
+				Timeout: 15 * time.Second,
+				Transport: subscriptionTransport(nil),
+			},
+		})
+	}
+
+	var lastErr error
+	var lastVia string
+	// 先用 clash.meta（兼容性最好），失败再换其它 UA
+	uas := append([]string{subscriptionTrafficUserAgents[0]}, subscriptionTrafficUserAgents[1:]...)
+	for _, item := range attempts {
+		for _, ua := range uas {
+			if err := ctx.Err(); err != nil {
+				return nil, SubscriptionTraffic{}, false, err
+			}
+			body, traffic, hasTraffic, err := fetchSubscriptionOnce(ctx, item.client, rawURL, ua)
+			if err == nil {
+				slog.Info("拉取订阅成功", "host", host, "via", item.label, "bytes", len(body))
+				return body, traffic, hasTraffic, nil
+			}
+			lastErr = err
+			lastVia = item.label
+			// 4xx 换 UA 无意义，直接换通道
+			if strings.Contains(err.Error(), "HTTP 4") {
+				break
 			}
 		}
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("请求订阅失败")
 	}
-	if !localMixedProxyAvailable() && strings.Contains(lastErr.Error(), "请求订阅失败") {
+	if preferProxy {
+		if len(attempts) == 0 {
+			return nil, SubscriptionTraffic{}, false, fmt.Errorf("本机代理端口 %s 不可用，请确认 mihomo 已启动", proxyServerValue)
+		}
+		slog.Warn("经代理拉取订阅失败", "host", host, "via", lastVia, "error", lastErr)
+		return nil, SubscriptionTraffic{}, false, fmt.Errorf("经本机代理拉取订阅失败：%w", lastErr)
+	}
+	if !viaProxy {
 		return nil, SubscriptionTraffic{}, false, fmt.Errorf("%w（请先启用可用订阅并开启代理后再刷新）", lastErr)
 	}
+	slog.Warn("拉取订阅失败", "host", host, "via", lastVia, "error", lastErr)
 	return nil, SubscriptionTraffic{}, false, lastErr
 }
 
-func subscriptionTrafficClients() []*http.Client {
-	clients := make([]*http.Client, 0, 2)
-	if localMixedProxyAvailable() {
-		proxyURL, err := url.Parse("http://" + proxyServerValue)
+func localMixedProxyAvailable() bool {
+	for attempt := 0; attempt < 3; attempt++ {
+		conn, err := net.DialTimeout("tcp", proxyServerValue, time.Second)
 		if err == nil {
-			clients = append(clients, &http.Client{
-				Timeout: 20 * time.Second,
-				Transport: &http.Transport{
-					Proxy: http.ProxyURL(proxyURL),
-				},
-			})
+			_ = conn.Close()
+			return true
+		}
+		if attempt < 2 {
+			time.Sleep(120 * time.Millisecond)
 		}
 	}
-	clients = append(clients, &http.Client{
-		Timeout: 20 * time.Second,
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-		},
-	})
-	return clients
+	return false
 }
 
-func localMixedProxyAvailable() bool {
-	conn, err := net.DialTimeout("tcp", proxyServerValue, 300*time.Millisecond)
-	if err != nil {
-		return false
+// LocalMixedProxyAvailable 本机 mixed-port 是否可用（用于刷新订阅时判断是否可走代理）。
+func LocalMixedProxyAvailable() bool {
+	return localMixedProxyAvailable()
+}
+
+func subscriptionTransport(proxyURL *url.URL) *http.Transport {
+	t := &http.Transport{
+		DisableKeepAlives: true,
+		MaxIdleConns:      0,
 	}
-	_ = conn.Close()
-	return true
+	if proxyURL != nil {
+		t.Proxy = http.ProxyURL(proxyURL)
+	} else {
+		t.Proxy = func(*http.Request) (*url.URL, error) { return nil, nil }
+	}
+	return t
 }
 
 func fetchSubscriptionOnce(ctx context.Context, client *http.Client, rawURL, userAgent string) ([]byte, SubscriptionTraffic, bool, error) {

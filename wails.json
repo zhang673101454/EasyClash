@@ -8,11 +8,11 @@
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "wailsjsdir": "./frontend",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "info": {
     "companyName": "EasyClash",
     "productName": "EasyClash",
-    "productVersion": "1.1.0",
+    "productVersion": "1.2.0",
     "copyright": "Copyright 2026",
     "comments": "极简代理客户端"
   },

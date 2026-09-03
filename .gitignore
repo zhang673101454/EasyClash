@@ -15,3 +15,5 @@ resources/*.zip
 .DS_Store
 Thumbs.db
 *.log
+easy-clash.exe
+resources/gh/

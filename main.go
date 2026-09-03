@@ -2,8 +2,12 @@ package main
 
 import (
 	"embed"
+	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
+
+	"easy-clash/backend"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -17,10 +21,20 @@ import (
 var assets embed.FS
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+	writers := []io.Writer{os.Stdout}
+	if dir, err := backend.DefaultConfigDir(); err == nil {
+		logPath := filepath.Join(dir, "easy-clash.log")
+		if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			writers = append(writers, f)
+		}
+	}
+	logger := slog.New(slog.NewTextHandler(io.MultiWriter(writers...), &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)
+	if dir, err := backend.DefaultConfigDir(); err == nil {
+		slog.Info("日志文件", "path", filepath.Join(dir, "easy-clash.log"))
+	}
 
 	app := NewApp()
 

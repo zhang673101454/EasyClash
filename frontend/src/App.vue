@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, watch } from 'vue'
 import AppModal from './components/AppModal.vue'
 import AppToast from './components/AppToast.vue'
+import AppVersion from './components/AppVersion.vue'
 import MiniDock from './components/MiniDock.vue'
 import ModeSwitches from './components/ModeSwitches.vue'
 import NodeList from './components/NodeList.vue'
@@ -23,7 +24,7 @@ onMounted(() => {
   try {
     EventsOn('proxy:status', (status: ProxyStatus) => {
       store.applyStatus(status)
-      void store.refreshNodes()
+      void store.refreshNodes(true)
     })
     EventsOn('proxy:error', (message: string) => {
       if (isServiceNotReady(message)) {
@@ -31,6 +32,18 @@ onMounted(() => {
         return
       }
       store.showToast(String(message))
+    })
+    EventsOn('subscription:refreshed', (payload: {
+      id: string
+      ok: boolean
+      error?: string
+      upload?: number
+      download?: number
+      total?: number
+      expire?: number
+      updatedAt?: number
+    }) => {
+      store.handleSubscriptionRefreshed(payload)
     })
     EventsOn('window:compact', (value: boolean) => {
       store.compact = Boolean(value)
@@ -46,6 +59,7 @@ onUnmounted(() => {
   try {
     EventsOff('proxy:status')
     EventsOff('proxy:error')
+    EventsOff('subscription:refreshed')
     EventsOff('window:compact')
   } catch (err) {
     console.warn('移除 Wails 事件失败', err)
@@ -89,6 +103,7 @@ watch(
       </section>
       <NodeList v-else />
     </main>
+    <AppVersion v-if="!store.showSettings" />
     <AppToast />
     <AppModal />
   </div>

@@ -9,6 +9,7 @@ import {
   GetStatus,
   GetSubscriptions,
   GetTraffic,
+  CancelAllSubscriptionRefresh,
   CancelRefreshSubscriptionTraffic,
   RefreshSubscriptionTraffic,
   RemoveSubscription,
@@ -24,13 +25,78 @@ import {
 } from '../../wailsjs/go/main/App'
 import type { backend, main } from '../../wailsjs/go/models'
 import { WindowShow, WindowUnminimise } from '../../wailsjs/runtime/runtime'
-import { errorMessage, isServiceNotReady, isTransientLoadError } from '../lib/errors'
+import { errorMessage, isRefreshCancelled, isServiceNotReady, isTransientLoadError } from '../lib/errors'
 import { asSubscriptionList, goBindingsReady, sleep, waitForGoBindings } from '../lib/subscriptions'
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer = 0
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error(message)), ms)
+      }),
+    ])
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
+/** 各 Go 接口前端超时（毫秒），略长于后端上限，超时后 UI 必须释放。 */
+const GO_MS = {
+  quick: 12_000,
+  status: 8_000,
+  nodes: 22_000,
+  switchSub: 75_000,
+  refresh: 50_000,
+  speedTest: 50_000,
+  toggle: 80_000,
+  tun: 95_000,
+  selectNode: 15_000,
+  subscription: 30_000,
+} as const
+
+/** 忙碌态兜底：即使 Wails 永不 resolve，也强制清掉 loading / 切换中 等标志。 */
+const BUSY_SAFETY_MS = {
+  loading: 70_000,
+  switching: 80_000,
+  speedTesting: 55_000,
+  refreshing: 50_000,
+} as const
+
+function createBusySafety(flag: { value: boolean }, ms: number) {
+  let timer = 0
+  return {
+    arm() {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        if (flag.value) {
+          flag.value = false
+        }
+      }, ms)
+    },
+    disarm() {
+      window.clearTimeout(timer)
+      timer = 0
+    },
+  }
+}
 
 export type ProxyStatus = main.ProxyStatus
 export type Subscription = main.SubscriptionItem
 export type ProxyNode = backend.ProxyNode
 export type TrafficInfo = main.TrafficInfo
+
+type SubscriptionRefreshPayload = {
+  id: string
+  ok: boolean
+  error?: string
+  upload?: number
+  download?: number
+  total?: number
+  expire?: number
+  updatedAt?: number
+}
 
 const MAX_USABLE_DELAY = 3000
 
@@ -42,6 +108,35 @@ function delayRank(node: ProxyNode): number {
     return 2_000_000
   }
   return node.delay
+}
+
+function nodeFromMessage(msg: string): string {
+  const match = msg.match(/已连接\s*-\s*(.+?)(?:\s*\(\d+ms\))?$/)
+  if (!match?.[1]) {
+    return ''
+  }
+  const name = match[1].trim()
+  if (name === 'DIRECT' || name === '智能模式') {
+    return ''
+  }
+  return name
+}
+
+function resolveNodeName(status: ProxyStatus, list: ProxyNode[]): string {
+  const raw = status as unknown as Record<string, unknown>
+  const direct = String(status.nodeName ?? raw.NodeName ?? '').trim()
+  if (direct && direct !== 'DIRECT') {
+    return direct
+  }
+  const fromMessage = nodeFromMessage(status.message || '')
+  if (fromMessage) {
+    return fromMessage
+  }
+  const selected = list.find((node) => node.selected)
+  if (selected?.name && selected.name !== 'DIRECT') {
+    return selected.name
+  }
+  return ''
 }
 
 function sortNodesByDelay(list: ProxyNode[]): ProxyNode[] {
@@ -62,6 +157,7 @@ export const useProxyStore = defineStore('proxy', () => {
   const message = ref('未连接')
   const loading = ref(false)
   const switching = ref(false)
+  const switchingSafety = createBusySafety(switching, BUSY_SAFETY_MS.switching)
   const toast = ref('')
   const toastKind = ref<'ok' | 'err'>('err')
   const modalTitle = ref('后端服务未启动')
@@ -99,7 +195,10 @@ export const useProxyStore = defineStore('proxy', () => {
     if (!connected.value) {
       return '未连接'
     }
-    const node = nodeName.value.trim()
+    const node =
+      nodeName.value.trim() ||
+      nodes.value.find((item) => item.selected && item.name !== 'DIRECT')?.name ||
+      nodeFromMessage(message.value)
     if (!node || node === 'DIRECT') {
       return '等待节点'
     }
@@ -134,7 +233,7 @@ export const useProxyStore = defineStore('proxy', () => {
 
   function applyStatus(status: ProxyStatus) {
     connected.value = Boolean(status.connected)
-    nodeName.value = status.nodeName || ''
+    nodeName.value = resolveNodeName(status, nodes.value)
     latencyMs.value = status.latencyMs || 0
     message.value = status.message || (connected.value ? '已连接' : '未连接')
     tun.value = Boolean(status.tun)
@@ -211,7 +310,6 @@ export const useProxyStore = defineStore('proxy', () => {
       autoStart.value = false
     }
     await refreshSubscriptionsRetrying()
-    void refreshAllSubscriptionTraffic()
     await refreshNodes()
   }
 
@@ -227,36 +325,154 @@ export const useProxyStore = defineStore('proxy', () => {
     }
   }
 
-  async function refreshSubscriptionTraffic(id: string, silent = false) {
-    try {
-      const updated = await RefreshSubscriptionTraffic(id)
-      subscriptions.value = subscriptions.value.map((sub) =>
-        sub.id === id
-          ? {
-              ...sub,
-              upload: updated.upload || 0,
-              download: updated.download || 0,
-              total: updated.total || 0,
-              expire: updated.expire || 0,
-              updatedAt: updated.updatedAt || 0,
-            }
-          : sub,
-      )
-      if (!silent) {
-        showToast('已刷新流量与节点')
+  const refreshTasks = new Map<string, Promise<void>>()
+  const refreshingSubscriptionId = ref('')
+  let refreshingSafetyTimer = 0
+  const speedTesting = ref(false)
+  const speedTestingSafety = createBusySafety(speedTesting, BUSY_SAFETY_MS.speedTesting)
+  const loadingSafety = createBusySafety(loading, BUSY_SAFETY_MS.loading)
+
+  function clearRefreshingSubscription(id?: string) {
+    if (id && refreshingSubscriptionId.value !== id) {
+      return
+    }
+    refreshingSubscriptionId.value = ''
+    window.clearTimeout(refreshingSafetyTimer)
+    refreshingSafetyTimer = 0
+  }
+
+  function armRefreshingSafetyClear(id: string) {
+    window.clearTimeout(refreshingSafetyTimer)
+    refreshingSafetyTimer = window.setTimeout(() => {
+      if (refreshingSubscriptionId.value === id) {
+        refreshingSubscriptionId.value = ''
+        showToast('刷新超时，已恢复操作')
       }
-    } catch (err) {
-      if (!silent) {
-        showToast(errorMessage(err))
+    }, BUSY_SAFETY_MS.refreshing)
+  }
+
+  const subscriptionInteractionLocked = computed(
+    () => switching.value || Boolean(refreshingSubscriptionId.value),
+  )
+
+  function patchSubscriptionFromRefresh(payload: SubscriptionRefreshPayload) {
+    subscriptions.value = subscriptions.value.map((sub) =>
+      sub.id === payload.id
+        ? {
+            ...sub,
+            upload: payload.upload ?? sub.upload ?? 0,
+            download: payload.download ?? sub.download ?? 0,
+            total: payload.total ?? sub.total ?? 0,
+            expire: payload.expire ?? sub.expire ?? 0,
+            updatedAt: payload.updatedAt ?? sub.updatedAt ?? 0,
+          }
+        : sub,
+    )
+  }
+
+  function handleSubscriptionRefreshed(payload: SubscriptionRefreshPayload) {
+    if (!payload?.id) {
+      return
+    }
+    patchSubscriptionFromRefresh(payload)
+    if (payload.id === refreshingSubscriptionId.value && payload.error && payload.ok === false) {
+      showToast(payload.error)
+    }
+    if (payload.id === refreshingSubscriptionId.value) {
+      clearRefreshingSubscription(payload.id)
+    }
+    if (payload.ok) {
+      void refreshNodes(true)
+    }
+  }
+
+  async function refreshSubscriptionTraffic(id: string, silent = false) {
+    if (!silent) {
+      if (switching.value) {
+        showToast('正在切换订阅，请稍候')
+        return
+      }
+      if (refreshingSubscriptionId.value && refreshingSubscriptionId.value !== id) {
+        showToast('正在刷新其他订阅，请稍候')
+        return
+      }
+      refreshingSubscriptionId.value = id
+      armRefreshingSafetyClear(id)
+      try {
+        await CancelRefreshSubscriptionTraffic(id)
+      } catch {
+        // ignore
+      }
+    } else {
+      const existing = refreshTasks.get(id)
+      if (existing) {
+        await existing.catch(() => {})
+      }
+    }
+
+    const task = (async () => {
+      try {
+        const updated = await withTimeout(
+          RefreshSubscriptionTraffic(id),
+          GO_MS.refresh,
+          '刷新订阅超时，请稍后重试',
+        )
+        subscriptions.value = subscriptions.value.map((sub) =>
+          sub.id === id
+            ? {
+                ...sub,
+                upload: updated.upload || 0,
+                download: updated.download || 0,
+                total: updated.total || 0,
+                expire: updated.expire || 0,
+                updatedAt: updated.updatedAt || 0,
+              }
+            : sub,
+        )
+        if (!silent) {
+          showToast('已刷新流量与节点', 'ok')
+        }
+      } catch (err) {
+        if (!silent && !isRefreshCancelled(err)) {
+          showToast(errorMessage(err))
+        }
+      } finally {
+        if (!silent) {
+          clearRefreshingSubscription(id)
+        }
+      }
+    })()
+
+    refreshTasks.set(id, task)
+    try {
+      await task
+    } finally {
+      if (refreshTasks.get(id) === task) {
+        refreshTasks.delete(id)
       }
     }
   }
 
+  async function cancelAllSubscriptionRefresh() {
+    clearRefreshingSubscription()
+    try {
+      await CancelAllSubscriptionRefresh()
+    } catch {
+      // ignore cancel errors
+    }
+    await Promise.all([...refreshTasks.values()].map((task) => task.catch(() => {})))
+  }
+
   async function cancelRefreshSubscriptionTraffic(id: string) {
+    clearRefreshingSubscription(id)
     try {
       await CancelRefreshSubscriptionTraffic(id)
     } catch {
       // ignore cancel errors
+    }
+    const task = refreshTasks.get(id)
+    if (task) {
+      await task.catch(() => {})
     }
   }
 
@@ -286,16 +502,28 @@ export const useProxyStore = defineStore('proxy', () => {
     }
   }
 
-  async function refreshNodes() {
+  async function refreshNodes(silent = false) {
+    if (switching.value || refreshingSubscriptionId.value) {
+      return
+    }
     if (!connected.value) {
       nodes.value = []
       return
     }
     try {
-      nodes.value = (await GetNodes()) || []
+      nodes.value =
+        (await withTimeout(GetNodes(), GO_MS.nodes, '获取节点列表超时')) || []
+      if (!nodeName.value || nodeName.value === 'DIRECT') {
+        const selected = nodes.value.find((node) => node.selected)
+        if (selected?.name && selected.name !== 'DIRECT') {
+          nodeName.value = selected.name
+        }
+      }
     } catch (err) {
       nodes.value = []
-      showToast(errorMessage(err))
+      if (!silent) {
+        showToast(errorMessage(err))
+      }
     }
   }
 
@@ -312,9 +540,16 @@ export const useProxyStore = defineStore('proxy', () => {
       return
     }
     loading.value = true
+    loadingSafety.arm()
     const before = subscriptions.value.length
     try {
-      subscriptions.value = asSubscriptionList(await AddSubscription(url, remark)) as Subscription[]
+      subscriptions.value = asSubscriptionList(
+        await withTimeout(
+          AddSubscription(url, remark),
+          GO_MS.subscription,
+          '添加订阅超时，请稍后重试',
+        ),
+      ) as Subscription[]
       draftUrl.value = ''
       draftRemark.value = ''
       showAddForm.value = false
@@ -332,6 +567,7 @@ export const useProxyStore = defineStore('proxy', () => {
       await refreshSubscriptions()
     } finally {
       loading.value = false
+      loadingSafety.disarm()
     }
   }
 
@@ -340,14 +576,22 @@ export const useProxyStore = defineStore('proxy', () => {
       return
     }
     loading.value = true
+    loadingSafety.arm()
     try {
-      subscriptions.value = asSubscriptionList(await RemoveSubscription(id)) as Subscription[]
+      subscriptions.value = asSubscriptionList(
+        await withTimeout(
+          RemoveSubscription(id),
+          GO_MS.subscription,
+          '删除订阅超时，请稍后重试',
+        ),
+      ) as Subscription[]
       showToast('订阅已删除')
       await refresh()
     } catch (err) {
       showToast(errorMessage(err))
     } finally {
       loading.value = false
+      loadingSafety.disarm()
     }
   }
 
@@ -355,28 +599,57 @@ export const useProxyStore = defineStore('proxy', () => {
     if (switching.value) {
       return
     }
+    if (refreshingSubscriptionId.value) {
+      showToast('正在刷新订阅，请稍候或点刷新按钮取消')
+      return
+    }
+    void cancelAllSubscriptionRefresh().catch(() => {})
     switching.value = true
+    switchingSafety.arm()
     const turningOff = Boolean(item.enabled && connected.value)
+    const prevConnected = connected.value
+    const prevNodeName = nodeName.value
     subscriptions.value = subscriptions.value.map((sub) => ({
       ...sub,
       enabled: turningOff ? false : sub.id === item.id,
     }))
-    connected.value = !turningOff
-    nodes.value = []
-    showToast(turningOff ? '已停用' : '已开始使用该订阅', turningOff ? 'err' : 'ok')
+    if (!turningOff) {
+      connected.value = true
+      nodes.value = []
+    }
     try {
-      const status = await UseSubscription(item.id)
+      const status = await withTimeout(
+        UseSubscription(item.id),
+        GO_MS.switchSub,
+        '切换订阅超时，请查看日志或重试',
+      )
       applyStatus(status)
       await refreshSubscriptions()
-      void refreshNodes()
-      if (!turningOff) {
-        void refreshSubscriptionTraffic(item.id, true)
-      }
+      void (async () => {
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          try {
+            applyStatus(
+              await withTimeout(GetStatus(), GO_MS.status, '读取状态超时'),
+            )
+          } catch {
+            break
+          }
+          await refreshNodes(true)
+          if (nodeName.value && nodeName.value !== 'DIRECT' && nodes.value.length > 0) {
+            break
+          }
+          await sleep(500)
+        }
+        showToast(turningOff ? '已停用' : '已开始使用该订阅', turningOff ? 'err' : 'ok')
+      })()
     } catch (err) {
+      connected.value = prevConnected
+      nodeName.value = prevNodeName
       showToast(errorMessage(err))
       await refresh()
     } finally {
       switching.value = false
+      switchingSafety.disarm()
     }
   }
 
@@ -386,12 +659,17 @@ export const useProxyStore = defineStore('proxy', () => {
       showToast('请填写订阅链接')
       return
     }
+    const prev = subscriptions.value.find((s) => s.id === id)
+    const urlChanged = prev ? prev.url.trim() !== nextUrl : true
     try {
       subscriptions.value = asSubscriptionList(
-        await UpdateSubscription(id, nextUrl, remark.trim()),
+        await UpdateSubscription(id, urlChanged ? nextUrl : '', remark.trim()),
       ) as Subscription[]
       showToast('订阅已更新', 'ok')
-      await refresh()
+      await refreshSubscriptions()
+      if (connected.value) {
+        await refreshNodes()
+      }
     } catch (err) {
       showToast(errorMessage(err))
     }
@@ -402,37 +680,51 @@ export const useProxyStore = defineStore('proxy', () => {
   }
 
   async function selectNode(name: string) {
-    if (loading.value) {
+    if (loading.value || switching.value || speedTesting.value) {
       return
     }
     loading.value = true
+    loadingSafety.arm()
     try {
-      applyStatus(await SelectNode(name))
+      applyStatus(
+        await withTimeout(SelectNode(name), GO_MS.selectNode, '切换节点超时，请重试'),
+      )
       await refreshNodes()
     } catch (err) {
       showToast(errorMessage(err))
     } finally {
       loading.value = false
+      loadingSafety.disarm()
     }
   }
 
   async function speedTest() {
-    if (loading.value) {
+    if (speedTesting.value) {
       return
     }
     if (!connected.value) {
       await requireService()
       return
     }
-    loading.value = true
+    speedTesting.value = true
+    speedTestingSafety.arm()
     try {
-      await refreshNodes()
-      applyStatus(await AutoSelectBestNode())
+      await refreshNodes(true)
+      applyStatus(
+        await withTimeout(
+          AutoSelectBestNode(),
+          GO_MS.speedTest,
+          '测速超时，请稍后重试',
+        ),
+      )
       await refreshNodes()
     } catch (err) {
-      notifyError(err)
+      if (!errorMessage(err).includes('测速已取消')) {
+        notifyError(err)
+      }
     } finally {
-      loading.value = false
+      speedTesting.value = false
+      speedTestingSafety.disarm()
     }
   }
 
@@ -441,8 +733,11 @@ export const useProxyStore = defineStore('proxy', () => {
       return
     }
     loading.value = true
+    loadingSafety.arm()
     try {
-      applyStatus(await ToggleProxy())
+      applyStatus(
+        await withTimeout(ToggleProxy(), GO_MS.toggle, '连接操作超时，请重试'),
+      )
       await refreshSubscriptions()
       await refreshNodes()
     } catch (err) {
@@ -450,6 +745,7 @@ export const useProxyStore = defineStore('proxy', () => {
       await refresh()
     } finally {
       loading.value = false
+      loadingSafety.disarm()
     }
   }
 
@@ -482,13 +778,17 @@ export const useProxyStore = defineStore('proxy', () => {
       return
     }
     loading.value = true
+    loadingSafety.arm()
     try {
-      applyStatus(await SetTunMode(enabled))
+      applyStatus(
+        await withTimeout(SetTunMode(enabled), GO_MS.tun, '切换 TUN 超时，请重试'),
+      )
       await refreshNodes()
     } catch (err) {
       showToast(errorMessage(err))
     } finally {
       loading.value = false
+      loadingSafety.disarm()
     }
   }
 
@@ -542,6 +842,23 @@ export const useProxyStore = defineStore('proxy', () => {
         upRate.value = 0
         downRate.value = 0
       }
+      if (connected.value && (!nodeName.value || nodeName.value === 'DIRECT')) {
+        if (switching.value || refreshingSubscriptionId.value) {
+          return
+        }
+        try {
+          applyStatus(await withTimeout(GetStatus(), GO_MS.status, '读取状态超时'))
+        } catch {
+          return
+        }
+        if (!nodeName.value || nodeName.value === 'DIRECT') {
+          await refreshNodes(true)
+          const selected = nodes.value.find((node) => node.selected)
+          if (selected?.name && selected.name !== 'DIRECT') {
+            nodeName.value = selected.name
+          }
+        }
+      }
     } catch {
       /* ignore */
     }
@@ -568,6 +885,9 @@ export const useProxyStore = defineStore('proxy', () => {
     latencyMs,
     message,
     loading,
+    switching,
+    refreshingSubscriptionId,
+    subscriptionInteractionLocked,
     toast,
     toastKind,
     modalTitle,
@@ -593,6 +913,7 @@ export const useProxyStore = defineStore('proxy', () => {
     headerSubtitle,
     statusLabel,
     applyStatus,
+    speedTesting,
     showToast,
     dismissModal,
     requireService,
@@ -601,6 +922,8 @@ export const useProxyStore = defineStore('proxy', () => {
     refreshNodes,
     refreshSubscriptionTraffic,
     cancelRefreshSubscriptionTraffic,
+    cancelAllSubscriptionRefresh,
+    handleSubscriptionRefreshed,
     refreshAllSubscriptionTraffic,
     addSubscription,
     onAddClick,

@@ -67,6 +67,8 @@ ManifestDPIAware true
 
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
+Var RemoveUserData
+
 ## The following two statements can be used to sign the installer and the uninstaller. The path to the binaries are provided in %1
 #!uninstfinalize 'signtool --file "%1"'
 #!finalize 'signtool --file "%1"'
@@ -103,6 +105,14 @@ Function CheckRunningEasyClash
  abort:
    Quit
  notrunning:
+FunctionEnd
+
+Function un.onInit
+    StrCpy $RemoveUserData "0"
+    IfSilent silent
+    MessageBox MB_YESNO|MB_ICONQUESTION "是否同时删除用户数据？$\n$\n将删除订阅链接、节点缓存、设置等（位于 %APPDATA%\${INFO_PRODUCTNAME}）。$\n选「否」仅卸载程序，重装后数据仍可用。" IDNO silent
+    StrCpy $RemoveUserData "1"
+silent:
 FunctionEnd
 
 Section
@@ -151,6 +161,10 @@ Section "uninstall"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
+
+    ${If} $RemoveUserData == "1"
+        RMDir /r "$APPDATA\${INFO_PRODUCTNAME}"
+    ${EndIf}
 
     RMDir /r $INSTDIR
 

@@ -10,6 +10,10 @@ export function AutoSelectBestNode() {
   return window['go']['main']['App']['AutoSelectBestNode']();
 }
 
+export function CancelAllSubscriptionRefresh() {
+  return window['go']['main']['App']['CancelAllSubscriptionRefresh']();
+}
+
 export function CancelRefreshSubscriptionTraffic(arg1) {
   return window['go']['main']['App']['CancelRefreshSubscriptionTraffic'](arg1);
 }

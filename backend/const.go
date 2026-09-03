@@ -10,4 +10,5 @@ const (
 	preferredGroup   = "PROXY"
 	configFileName   = "config.yaml"
 	proxyServerValue = "127.0.0.1:7890"
+	subscriptionGroupPrefix = "SUB_"
 )

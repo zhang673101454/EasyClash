@@ -214,13 +214,33 @@ func SetSubscriptionEnabled(configDir, id string, enabled bool) ([]Subscription,
 	if !found {
 		return nil, fmt.Errorf("找不到该订阅")
 	}
-	if err := persistSubscriptions(configDir, items); err != nil {
+	if err := writeSubscriptionsJSON(configDir, items); err != nil {
 		return nil, err
 	}
 	return items, nil
 }
 
+// SyncProvidersConfig 将 subscriptions.json 同步到 config.yaml（增删订阅或刷新后调用）。
+func SyncProvidersConfig(configDir string) error {
+	items, err := ListSubscriptions(configDir)
+	if err != nil {
+		return err
+	}
+	return syncProvidersToConfig(configDir, items)
+}
+
 func persistSubscriptions(configDir string, items []Subscription) error {
+	if err := writeSubscriptionsJSON(configDir, items); err != nil {
+		return err
+	}
+	if err := syncProvidersToConfig(configDir, items); err != nil {
+		return err
+	}
+	slog.Info("已更新订阅列表", "count", len(items))
+	return nil
+}
+
+func writeSubscriptionsJSON(configDir string, items []Subscription) error {
 	if items == nil {
 		items = []Subscription{}
 	}
@@ -242,10 +262,6 @@ func persistSubscriptions(configDir string, items []Subscription) error {
 	if err := os.WriteFile(subscriptionsPath(configDir), data, 0o644); err != nil {
 		return fmt.Errorf("写入订阅列表失败: %w", err)
 	}
-	if err := syncProvidersToConfig(configDir, items); err != nil {
-		return err
-	}
-	slog.Info("已更新订阅列表", "count", len(items))
 	return nil
 }
 
@@ -281,23 +297,17 @@ func syncProvidersToConfig(configDir string, items []Subscription) error {
 		return err
 	}
 	providers := map[string]any{}
-	enabledIDs := make([]any, 0, 1)
 	keep := map[string]struct{}{}
 	for _, item := range items {
 		keep[item.ID] = struct{}{}
-		if !item.Enabled {
-			continue
-		}
 		if hasProviderSourceFile(configDir, item.ID) {
 			providers[item.ID] = newFileProviderEntry(item.ID)
 		} else {
 			providers[item.ID] = newProviderEntry(item.ID, item.URL)
 		}
-		enabledIDs = append(enabledIDs, item.ID)
-		keep[item.ID] = struct{}{}
 	}
 	cfg["proxy-providers"] = providers
-	if err := ensureProxyGroupUses(cfg, enabledIDs); err != nil {
+	if err := ensureNestedProxyGroups(cfg, items); err != nil {
 		return err
 	}
 	cfg["rules"] = BuildRoutingRules(items)
@@ -367,6 +377,14 @@ func SaveProviderSource(configDir, id string, data []byte) error {
 	if len(data) == 0 {
 		return fmt.Errorf("订阅内容为空")
 	}
+	sanitized, removed, err := SanitizeProviderSource(data)
+	if err != nil {
+		return err
+	}
+	if removed > 0 {
+		slog.Info("保存订阅前已清洗节点", "id", id, "removed", removed)
+	}
+	data = sanitized
 	if err := os.MkdirAll(filepath.Join(configDir, "providers"), 0o755); err != nil {
 		return fmt.Errorf("创建 providers 目录失败: %w", err)
 	}
@@ -535,51 +553,82 @@ func cleanupProviderFiles(configDir string, keep map[string]struct{}) {
 	}
 }
 
-func ensureProxyGroupUses(cfg map[string]any, enabledIDs []any) error {
+// SubscriptionGroupName 订阅子策略组名（与 proxy-provider 的 id 区分，避免 mihomo duplicate name）。
+func SubscriptionGroupName(id string) string {
+	return subscriptionGroupPrefix + id
+}
+
+// SubscriptionIDFromGroup 从子策略组名还原订阅 id。
+func SubscriptionIDFromGroup(group string) string {
+	if strings.HasPrefix(group, subscriptionGroupPrefix) {
+		return strings.TrimPrefix(group, subscriptionGroupPrefix)
+	}
+	return ""
+}
+
+// ensureNestedProxyGroups 为每条订阅建子策略组，PROXY 顶层只选订阅（运行中 API 切换，无需重载内核）。
+func ensureNestedProxyGroups(cfg map[string]any, items []Subscription) error {
+	subIDs := make(map[string]struct{}, len(items))
+	subOrder := make([]string, 0, len(items))
+	for _, item := range items {
+		subIDs[item.ID] = struct{}{}
+		subOrder = append(subOrder, item.ID)
+	}
+
 	groups, ok := cfg["proxy-groups"].([]any)
 	if !ok {
 		groups = []any{}
 	}
 
-	found := false
-	for i, item := range groups {
+	other := make([]any, 0, len(groups))
+	for _, item := range groups {
 		group, ok := item.(map[string]any)
 		if !ok {
+			other = append(other, item)
 			continue
 		}
 		name, _ := group["name"].(string)
-		if name != preferredGroup {
+		if name == preferredGroup {
 			continue
 		}
-		group["type"] = "select"
-		group["include-all-proxies"] = true
-		group["exclude-type"] = "selector,urltest,fallback,loadbalance,relay,direct,reject"
-		group["proxies"] = []any{"DIRECT"}
-		if len(enabledIDs) > 0 {
-			group["use"] = enabledIDs
-		} else {
-			delete(group, "use")
-			delete(group, "include-all-proxies")
-			delete(group, "exclude-type")
+		if _, isSub := subIDs[name]; isSub {
+			continue
 		}
-		groups[i] = group
-		found = true
-		break
+		if id := SubscriptionIDFromGroup(name); id != "" {
+			if _, isSub := subIDs[id]; isSub {
+				continue
+			}
+		}
+		other = append(other, item)
 	}
-	if !found {
-		group := map[string]any{
-			"name":    preferredGroup,
-			"type":    "select",
-			"proxies": []any{"DIRECT"},
-		}
-		if len(enabledIDs) > 0 {
-			group["use"] = enabledIDs
-			group["include-all-proxies"] = true
-			group["exclude-type"] = "selector,urltest,fallback,loadbalance,relay,direct,reject"
-		}
-		groups = append([]any{group}, groups...)
+
+	childGroups := make([]any, 0, len(subOrder))
+	proxyMembers := make([]any, 0, len(subOrder)+1)
+	for _, id := range subOrder {
+		groupName := SubscriptionGroupName(id)
+		childGroups = append(childGroups, map[string]any{
+			"name":                groupName,
+			"type":                "select",
+			"use":                 []any{id},
+			"include-all-proxies": true,
+			"exclude-type":        "selector,urltest,fallback,loadbalance,relay,direct,reject",
+			"proxies":             []any{"DIRECT"},
+		})
+		proxyMembers = append(proxyMembers, groupName)
 	}
-	cfg["proxy-groups"] = groups
+	proxyMembers = append(proxyMembers, "DIRECT")
+
+	proxyGroup := map[string]any{
+		"name":    preferredGroup,
+		"type":    "select",
+		"proxies": proxyMembers,
+	}
+
+	newGroups := make([]any, 0, 1+len(childGroups)+len(other))
+	newGroups = append(newGroups, proxyGroup)
+	newGroups = append(newGroups, childGroups...)
+	newGroups = append(newGroups, other...)
+	cfg["proxy-groups"] = newGroups
 	return nil
 }
 
